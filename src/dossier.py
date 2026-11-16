@@ -47,8 +47,14 @@ def resolve(con, text: str) -> dict:
             JOIN location l USING (location_id) WHERE a.alias_key = ?""", [key]).fetchone()
         if row:
             return {"location_id": row[0], "label": row[1], "method": "exact intersection name"}
+        # People drop suffixes ("16th & Mission"). Treat each typed street as
+        # the start of a real street name: 16TH -> 16TH ST, MISSION -> MISSION ST.
+        fuzzy = _match_without_suffix(con, key.split(" & "))
+        if fuzzy:
+            return fuzzy
+        candidates = next((c for p in key.split(" & ") if (c := _candidates(con, p))), [])
         return {"error": f"No intersection named '{key}' in any source system.",
-                "candidates": _candidates(con, key.split(" & ")[0])}
+                "candidates": candidates}
 
     # 2. Street address: "500 Market St". 311 has ~200k geocoded addresses,
     #    so it doubles as our geocoder: find the same street, closest house
@@ -81,6 +87,30 @@ def resolve(con, text: str) -> dict:
     # 3. Anything else: a street name -> list busiest intersections on it
     return {"error": "Ambiguous: give an intersection or a street address.",
             "candidates": _candidates(con, text)}
+
+
+def _match_without_suffix(con, parts: list[str]) -> dict | None:
+    """Find intersections where every typed street is a full street name or the
+    start of one (word boundary). Prefer the fewest extra streets, then the
+    busiest place."""
+    def covers(streets, part):
+        return any(s == part or s.startswith(part + " ") for s in streets)
+
+    rows = con.execute("""
+        SELECT a.location_id, l.label, a.alias_key,
+               (SELECT count(*) FROM event e WHERE e.location_id = a.location_id) AS n
+        FROM location_alias a JOIN location l USING (location_id)""").fetchall()
+    hits = [(len(alias.split(" & ")), -n, loc_id, label)
+            for loc_id, label, alias, n in rows
+            if all(covers(alias.split(" & "), p) for p in parts)]
+    if not hits:
+        return None
+    hits.sort()
+    _, _, loc_id, label = hits[0]
+    others = len({h[2] for h in hits}) - 1
+    note = f"; {others} other match(es)" if others else ""
+    return {"location_id": loc_id, "label": label,
+            "method": f"street names completed (e.g. 16TH -> 16TH ST){note}"}
 
 
 def _candidates(con, street_text: str) -> list[str]:

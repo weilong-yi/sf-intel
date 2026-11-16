@@ -1,0 +1,714 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>SF Intel</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=IBM+Plex+Mono:wght@400;500;600&display=swap">
+<style>
+/* Operations-console style:
+   Inter + IBM Plex Mono, cool neutral scale, 6/8px radii, 1px shadow rings instead of borders,
+   8px spacing grid, dense 13-14px type, all-caps mono labels, navy chrome with orange accent.
+   Source systems keep one colour from the data scales: police blue, fire/EMS red, 311 green. */
+:root {
+  --bg: #f8f9fa;            /* app-ui light-4 canvas */
+  --surface: #ffffff;
+  --sunk: #edf0f2;          /* light-3 input/inset */
+  --ink: #1f2021;           /* dark-0 */
+  --muted: rgba(31, 32, 33, .66);
+  --subtle: rgba(31, 32, 33, .33);
+  --line: rgba(28, 34, 38, .12);
+  --ring: 0 0 0 1px rgba(28, 34, 38, .10), 0 1px 1px rgba(28, 34, 38, .05), 0 2px 4px rgba(28, 34, 38, .08);
+  --shadow: 0 0 0 1px rgba(28, 34, 38, .10), 0 2px 4px rgba(28, 34, 38, .10), 0 8px 24px rgba(28, 34, 38, .14);
+  --chrome: #172935;        /* brand navy */
+  --chrome-ink: #ffffff;
+  --chrome-muted: rgba(255, 255, 255, .62);
+  --brand: #f26322;         /* brand orange (accents on dark) */
+  --accent: #bf4d24;        /* app-ui orange-1 (text-safe on light) */
+  --accent-soft: #fde9df;
+  --on-accent: #ffffff;
+  --police: #4168cb;        /* blue-1 */
+  --fire: #c7394e;          /* red-1 */
+  --s311: #007f4c;          /* green-1 */
+  --amber: #bf4d24; --amber-soft: #fde9df;
+  --good: #007f4c; --good-soft: #dff4ea; --bad: #c7394e; --bad-soft: #fbe4e8; --focus: #4168cb;
+  --font-display: "Inter", "Segoe UI", system-ui, sans-serif;
+  --font-body: "Inter", "Segoe UI", system-ui, sans-serif;
+  --font-mono: "IBM Plex Mono", Consolas, ui-monospace, monospace;
+  --r: 6px; --r-lg: 8px;
+}
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #1f2021; --surface: #2a2c2e; --sunk: #36393c; --ink: #f8f9fa;   /* app-ui dark scale */
+    --muted: rgba(248, 249, 250, .66); --subtle: rgba(248, 249, 250, .33); --line: rgba(255, 255, 255, .10);
+    --ring: 0 0 0 1px rgba(255, 255, 255, .08); --shadow: 0 0 0 1px rgba(255, 255, 255, .10), 0 8px 24px rgba(0, 0, 0, .5);
+    --chrome: #172935; --accent: #f09264; --accent-soft: rgba(242, 99, 34, .16); --on-accent: #1f2021;
+    --police: #678ef1; --fire: #ed5f74; --s311: #1ba572;                  /* step 2 of each scale */
+    --amber: #f09264; --amber-soft: rgba(242, 99, 34, .16);
+    --good: #27c291; --good-soft: rgba(27, 165, 114, .16); --bad: #ed5f74; --bad-soft: rgba(237, 95, 116, .16); --focus: #85adf7;
+    color-scheme: dark;
+  }
+}
+* { box-sizing: border-box; }
+[hidden] { display: none !important; }
+html, body { height: 100%; }
+body { margin: 0; background: var(--bg); color: var(--ink); font: 14px/1.5 var(--font-body); -webkit-font-smoothing: antialiased; }
+button, input, select, textarea { font: inherit; color: inherit; }
+code, pre, .mono { font-family: var(--font-mono); }
+:focus-visible { outline: 2px solid var(--focus); outline-offset: 2px; }
+.num { font-variant-numeric: tabular-nums; }
+.muted { color: var(--muted); }
+.eyebrow { font-family: var(--font-mono); font-size: 11px; font-weight: 500; letter-spacing: .08em; text-transform: uppercase; color: var(--muted); }
+
+/* ---------- top bar (navy chrome) ---------- */
+.top { position: sticky; top: 0; z-index: 20; background: var(--chrome); color: var(--chrome-ink); }
+.top-inner { max-width: 1240px; margin: 0 auto; padding: 0 24px; display: flex; align-items: center; gap: 24px; min-height: 52px; flex-wrap: wrap; }
+.brand { font-weight: 700; font-size: 15px; letter-spacing: -.01em; display: flex; align-items: center; gap: 10px; }
+.brand-mark { display: inline-flex; gap: 2px; }
+.brand-mark i { width: 4px; height: 14px; border-radius: 1px; display: block; }
+.tabs { display: flex; gap: 4px; }
+.tab { border: 0; background: none; padding: 16px 10px 14px; cursor: pointer; color: var(--chrome-muted); font-weight: 500; font-size: 13px; border-bottom: 2px solid transparent; }
+.tab:hover { color: var(--chrome-ink); }
+.tab[aria-selected="true"] { color: var(--chrome-ink); border-bottom-color: var(--brand); }
+.top-meta { margin-left: auto; display: flex; gap: 8px; flex-wrap: wrap; }
+.top .chip { border-color: rgba(255, 255, 255, .16); color: var(--chrome-muted); }
+.top .chip b { color: var(--chrome-ink); }
+.chip { font-family: var(--font-mono); font-size: 11px; padding: 3px 8px; border-radius: 999px; border: 1px solid var(--line); color: var(--muted); white-space: nowrap; letter-spacing: .02em; }
+.chip b { color: var(--ink); font-weight: 500; }
+.dot { display: inline-block; width: 8px; height: 8px; border-radius: 50%; margin-right: 6px; vertical-align: 1px; }
+.dot.police { background: var(--police); } .dot.fire_ems { background: var(--fire); } .dot.s311, .dot.\33 11 { background: var(--s311); }
+
+main { max-width: 1240px; margin: 0 auto; padding: 24px 24px 40px; }
+.view[hidden] { display: none !important; }
+
+/* ---------- shared ---------- */
+.panel { background: var(--surface); box-shadow: var(--ring); border-radius: var(--r-lg); padding: 16px; min-width: 0; }
+.panel h3 { margin: 0 0 12px; font-family: var(--font-mono); font-size: 11px; font-weight: 500; letter-spacing: .08em; text-transform: uppercase; color: var(--muted); }
+.btn { border: 0; background: var(--accent); color: var(--on-accent); padding: 8px 14px; border-radius: var(--r); cursor: pointer; font-weight: 600; font-size: 13px; white-space: nowrap; }
+.btn:hover { filter: brightness(1.06); }
+.btn:disabled { opacity: .5; cursor: default; }
+.btn.ghost { background: var(--surface); color: var(--ink); box-shadow: 0 0 0 1px var(--line); font-weight: 500; }
+.btn.ghost:hover { box-shadow: 0 0 0 1px var(--subtle); filter: none; }
+.btn.sm { padding: 4px 10px; font-size: 12px; }
+input[type=text], textarea, select { background: var(--surface); border: 0; box-shadow: 0 0 0 1px var(--line); border-radius: var(--r); padding: 8px 12px; font-size: 13px; }
+input[type=text]:focus, textarea:focus, select:focus { box-shadow: 0 0 0 2px var(--focus); outline: none; }
+.err { background: var(--bad-soft); color: var(--bad); border-radius: var(--r); padding: 10px 14px; font-size: 13px; white-space: pre-wrap; }
+.table-wrap { overflow: auto; box-shadow: 0 0 0 1px var(--line); border-radius: var(--r); background: var(--surface); }
+table { border-collapse: collapse; width: 100%; font-size: 13px; }
+th, td { padding: 6px 10px; border-bottom: 1px solid var(--line); text-align: left; vertical-align: top; white-space: nowrap; }
+th { position: sticky; top: 0; background: var(--sunk); font-family: var(--font-mono); font-weight: 500; font-size: 10.5px; letter-spacing: .08em; text-transform: uppercase; color: var(--muted); z-index: 1; }
+tr:last-child td { border-bottom: 0; }
+td.n, th.n { text-align: right; font-variant-numeric: tabular-nums; }
+td.wrap { white-space: normal; min-width: 220px; }
+.evlink { font-family: var(--font-mono); font-size: 12px; color: var(--police); background: none; border: 0; padding: 0; cursor: pointer; text-decoration: underline; text-underline-offset: 2px; }
+.cite { font-family: var(--font-mono); font-size: 11.5px; border: 0; box-shadow: 0 0 0 1px var(--line); background: var(--sunk); border-radius: 4px; padding: 0 6px; cursor: pointer; color: var(--ink); white-space: nowrap; }
+.cite:hover { box-shadow: 0 0 0 1px var(--police); }
+.cite .dot { width: 6px; height: 6px; margin-right: 4px; }
+
+/* ---------- ASK ---------- */
+.ask-layout { max-width: 860px; margin: 0 auto; display: flex; flex-direction: column; min-height: calc(100vh - 140px); }
+.thread { flex: 1; display: grid; gap: 22px; align-content: start; padding-bottom: 20px; }
+.hello { padding: 40px 0 10px; display: grid; gap: 14px; }
+.hello h1 { font-weight: 700; font-size: clamp(22px, 3.2vw, 30px); letter-spacing: -.02em; line-height: 1.2; margin: 0; text-wrap: balance; }
+.suggest { display: grid; grid-template-columns: repeat(auto-fill, minmax(240px, 1fr)); gap: 8px; }
+.suggest button { text-align: left; border: 0; box-shadow: var(--ring); background: var(--surface); border-radius: var(--r-lg); padding: 10px 12px; cursor: pointer; font-size: 13px; }
+.suggest button:hover { box-shadow: 0 0 0 1px var(--accent); }
+.q { justify-self: end; max-width: 80%; background: var(--chrome); color: #fff; padding: 9px 14px; border-radius: var(--r-lg) var(--r-lg) 2px var(--r-lg); white-space: pre-wrap; }
+.turn { display: grid; gap: 10px; }
+details.work { box-shadow: var(--ring); border-radius: var(--r-lg); background: var(--surface); }
+details.work > summary { cursor: pointer; padding: 9px 14px; font-family: var(--font-mono); font-size: 11px; letter-spacing: .06em; text-transform: uppercase; color: var(--muted); display: flex; gap: 10px; align-items: center; list-style: none; }
+details.work > summary::-webkit-details-marker { display: none; }
+details.work > summary::before { content: "▸"; transition: transform .15s; }
+details.work[open] > summary::before { transform: rotate(90deg); }
+.spinner { width: 12px; height: 12px; border: 2px solid var(--line); border-top-color: var(--ink); border-radius: 50%; animation: spin .8s linear infinite; }
+@keyframes spin { to { transform: rotate(360deg); } }
+.steps { display: grid; gap: 10px; padding: 0 14px 14px; }
+.tcall { border-left: 2px solid var(--police); padding: 2px 0 2px 12px; display: grid; gap: 6px; min-width: 0; }
+.tcall.error { border-left-color: var(--bad); }
+.tcall .head { font-size: .86rem; }
+.tcall .head b { font-family: var(--font-mono); font-weight: 500; }
+pre.sql { margin: 0; background: var(--sunk); border-radius: var(--r); padding: 10px 12px; font-size: .78rem; overflow-x: auto; line-height: 1.5; }
+.kw { color: var(--police); font-weight: 500; }
+.str { color: var(--s311); }
+.res-meta { font-size: .78rem; color: var(--muted); display: flex; gap: 10px; align-items: center; }
+.res-table { max-height: 260px; }
+.step-line { font-family: var(--font-mono); font-size: 10.5px; letter-spacing: .06em; text-transform: uppercase; color: var(--subtle); }
+.answer { background: var(--surface); box-shadow: var(--ring); border-radius: var(--r-lg); padding: 16px 20px; min-width: 0; font-size: 14px; line-height: 1.6; }
+.answer p, .answer ul, .answer ol { margin: 0 0 10px; max-width: 72ch; }
+.answer h1, .answer h2, .answer h3, .answer h4 { font-size: 14px; font-weight: 600; margin: 14px 0 6px; }
+.answer li { margin: 3px 0; }
+.answer code { background: var(--sunk); padding: 1px 5px; border-radius: 4px; font-size: .85em; }
+.answer table { margin: 6px 0 12px; }
+.answer .table-wrap { margin-bottom: 10px; }
+.answer > :last-child { margin-bottom: 0; }
+.ans-foot { font-family: var(--font-mono); font-size: 10.5px; letter-spacing: .06em; text-transform: uppercase; color: var(--subtle); }
+.composer { position: sticky; bottom: 0; background: linear-gradient(transparent, var(--bg) 22%); padding: 18px 0 6px; display: grid; gap: 6px; }
+.composer form { display: flex; gap: 8px; align-items: flex-end; background: var(--surface); border-radius: var(--r-lg); padding: 6px; box-shadow: var(--shadow); }
+.composer textarea { flex: 1; border: 0; box-shadow: none !important; resize: none; min-height: 42px; max-height: 180px; padding: 10px; background: transparent; }
+.composer textarea:focus { outline: none; }
+.composer .hint { font-size: .74rem; color: var(--muted); display: flex; justify-content: space-between; gap: 8px; flex-wrap: wrap; }
+.linkbtn { background: none; border: 0; color: var(--muted); text-decoration: underline; cursor: pointer; padding: 0; font-size: inherit; }
+
+/* ---------- PLACES ---------- */
+.search { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; margin-bottom: 18px; }
+.search input { flex: 1 1 320px; font-size: 14px; padding: 9px 14px; }
+.seg { display: inline-flex; box-shadow: 0 0 0 1px var(--line); border-radius: var(--r); overflow: hidden; background: var(--surface); }
+.seg button { border: 0; background: none; padding: 7px 12px; cursor: pointer; color: var(--muted); font-size: 12px; font-weight: 500; }
+.seg button[aria-pressed="true"] { background: var(--chrome); color: #fff; }
+.seg-label { font-family: var(--font-mono); font-size: 11px; letter-spacing: .08em; text-transform: uppercase; color: var(--muted); }
+.grid { display: grid; gap: 14px; }
+.cols-3 { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+.cols-2 { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+.place-head { display: flex; justify-content: space-between; gap: 16px; align-items: flex-start; flex-wrap: wrap; }
+.place-head h2 { margin: 4px 0 4px; font-size: clamp(20px, 2.6vw, 26px); letter-spacing: -.02em; font-weight: 700; }
+.resolved { font-size: .82rem; color: var(--muted); }
+.aliases { font-size: .8rem; color: var(--muted); margin-top: 4px; }
+.kpi { border-top: 3px solid var(--line); border-radius: 2px 2px var(--r-lg) var(--r-lg); }
+.kpi.police { border-top-color: var(--police); } .kpi.fire_ems { border-top-color: var(--fire); } .kpi.s311 { border-top-color: var(--s311); }
+.kpi .big { font-weight: 700; font-size: 28px; letter-spacing: -.02em; line-height: 1.1; font-variant-numeric: tabular-nums; }
+.kpi .row { display: flex; justify-content: space-between; font-size: .84rem; color: var(--muted); gap: 8px; }
+.kpi .row b { color: var(--ink); font-weight: 500; font-variant-numeric: tabular-nums; }
+.trend { font-family: var(--font-mono); font-size: 10.5px; letter-spacing: .06em; text-transform: uppercase; padding: 2px 7px; border-radius: 999px; }
+.trend.up { background: var(--amber-soft); color: var(--amber); }
+.trend.down { background: var(--good-soft); color: var(--good); }
+.trend.flat { background: var(--sunk); color: var(--muted); }
+.cat { display: grid; grid-template-columns: minmax(0, 1fr) 3rem; gap: 2px 10px; align-items: center; font-size: .84rem; margin-bottom: 7px; }
+.cat .bar { grid-column: 1 / -1; height: 6px; border-radius: 3px; background: var(--sunk); overflow: hidden; }
+.cat .bar i { display: block; height: 100%; }
+.srcbar { display: inline-block; height: 8px; border-radius: 2px; vertical-align: middle; margin-left: 6px; }
+.stat-pair { display: flex; gap: 28px; flex-wrap: wrap; }
+.stat-pair div { display: grid; }
+.stat-pair .big { font-weight: 700; font-size: 22px; letter-spacing: -.02em; font-variant-numeric: tabular-nums; }
+.places-list button { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 10px; width: 100%; text-align: left; background: none; border: 0; border-bottom: 1px solid var(--line); padding: 9px 2px; cursor: pointer; }
+.places-list button:hover .pl { text-decoration: underline; }
+.places-list .pl { font-weight: 500; }
+.stackline { display: flex; height: 8px; width: 140px; border-radius: 2px; overflow: hidden; background: var(--sunk); align-self: center; }
+.stackline i { display: block; height: 100%; }
+.match-row { display: grid; grid-template-columns: 5.5rem minmax(0, 1fr); gap: 10px; align-items: center; font-size: .84rem; margin-bottom: 8px; }
+.mbar { display: flex; height: 16px; border-radius: 3px; overflow: hidden; background: var(--sunk); }
+.mbar i { display: block; height: 100%; }
+
+/* ---------- SQL ---------- */
+.sql-layout { display: grid; grid-template-columns: 260px minmax(0, 1fr); gap: 16px; align-items: start; }
+.schema { max-height: calc(100vh - 130px); overflow: auto; position: sticky; top: 76px; padding: 10px 12px; }
+.schema details { border-bottom: 1px solid var(--line); padding: 4px 0; }
+.schema summary { cursor: pointer; font-family: var(--font-mono); font-size: .82rem; padding: 4px 0; display: flex; justify-content: space-between; gap: 6px; }
+.schema summary span { color: var(--muted); font-size: .72rem; }
+.schema ul { list-style: none; margin: 0 0 6px; padding: 0 0 0 10px; }
+.schema li button { background: none; border: 0; padding: 2px 0; cursor: pointer; font-family: var(--font-mono); font-size: .76rem; display: flex; justify-content: space-between; width: 100%; gap: 8px; text-align: left; }
+.schema li button:hover { color: var(--police); }
+.schema li span { color: var(--muted); }
+.editor { display: grid; gap: 10px; }
+.editor textarea { font-family: var(--font-mono); font-size: .85rem; min-height: 170px; resize: vertical; line-height: 1.5; tab-size: 2; }
+.editor-bar { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
+.editor-bar select { max-width: 340px; }
+.sql-out .table-wrap { max-height: calc(100vh - 420px); min-height: 120px; }
+
+/* ---------- drawer ---------- */
+.scrim { position: fixed; inset: 0; background: rgba(28, 34, 38, .4); z-index: 30; }
+.drawer { position: fixed; top: 0; right: 0; bottom: 0; width: min(620px, 100vw); background: var(--bg); z-index: 31; box-shadow: var(--shadow); display: flex; flex-direction: column; }
+.drawer-head { display: flex; justify-content: space-between; align-items: center; gap: 10px; padding: 12px 16px; background: var(--chrome); color: #fff; }
+.drawer-head .eyebrow { color: rgba(255,255,255,.62); }
+.drawer-head .btn.ghost { background: transparent; color: #fff; box-shadow: 0 0 0 1px rgba(255,255,255,.24); }
+.drawer-body { overflow: auto; padding: 16px 18px 30px; display: grid; gap: 14px; align-content: start; }
+dl.kv { display: grid; grid-template-columns: minmax(120px, 34%) minmax(0, 1fr); gap: 4px 14px; margin: 0; font-size: .85rem; }
+dl.kv dt { color: var(--muted); font-family: var(--font-mono); font-size: .76rem; padding-top: 2px; }
+dl.kv dd { margin: 0; word-break: break-word; }
+.grain-note { background: var(--accent-soft); border-radius: var(--r); padding: 10px 12px; font-size: .86rem; }
+
+@media (max-width: 900px) {
+  .cols-3, .cols-2 { grid-template-columns: minmax(0, 1fr); }
+  .sql-layout { grid-template-columns: minmax(0, 1fr); }
+  .schema { position: static; max-height: 260px; }
+  .top-meta { display: none; }
+}
+@media (prefers-reduced-motion: reduce) { * { animation: none !important; transition: none !important; } }
+</style>
+</head>
+<body>
+<header class="top">
+  <div class="top-inner">
+    <div class="brand"><span class="brand-mark"><i style="background:var(--police)"></i><i style="background:var(--fire)"></i><i style="background:var(--s311)"></i></span>SF Intel</div>
+    <nav class="tabs" role="tablist">
+      <button class="tab" role="tab" data-view="ask" aria-selected="true">Ask</button>
+      <button class="tab" role="tab" data-view="places" aria-selected="false">Places</button>
+      <button class="tab" role="tab" data-view="sql" aria-selected="false">SQL</button>
+    </nav>
+    <div class="top-meta" id="topMeta"></div>
+  </div>
+</header>
+
+<main>
+  <!-- ================= ASK ================= -->
+  <section class="view" id="view-ask">
+    <div class="ask-layout">
+      <div class="thread" id="thread">
+        <div class="hello" id="hello">
+          <div class="eyebrow">AI assistant · answers only from the data</div>
+          <h1>Ask about San Francisco's police, fire/EMS and 311 records</h1>
+          <p class="muted" style="margin:0;max-width:62ch">Each answer shows the queries it ran. Click an event ID like <span class="cite"><span class="dot police"></span>police:1592086</span> to see the source record.</p>
+          <div class="suggest" id="suggest"></div>
+        </div>
+      </div>
+      <div class="composer">
+        <form id="askForm">
+          <textarea id="askInput" rows="1" placeholder="Ask a question about the last 90 days…" aria-label="Question"></textarea>
+          <button class="btn" id="askBtn" type="submit">Ask</button>
+        </form>
+        <div class="hint"><span>Enter to send · Shift+Enter for a new line · follow-up questions keep context</span><button type="button" class="linkbtn" id="newChat">New conversation</button></div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ================= PLACES ================= -->
+  <section class="view" id="view-places" hidden>
+    <form class="search" id="placeForm">
+      <input type="text" id="placeInput" placeholder="Intersection or address, e.g. 16th & Mission or 1 Dr Carlton B Goodlett Pl" aria-label="Place">
+      <span class="seg-label">Area</span>
+      <div class="seg" id="radiusSeg" role="group" aria-label="Area radius">
+        <button type="button" data-r="0">Exact</button>
+        <button type="button" data-r="50">50 m</button>
+        <button type="button" data-r="100" aria-pressed="true">100 m</button>
+        <button type="button" data-r="200">200 m</button>
+      </div>
+      <button class="btn" type="submit">Show profile</button>
+    </form>
+    <div id="placeOut"></div>
+  </section>
+
+  <!-- ================= SQL ================= -->
+  <section class="view" id="view-sql" hidden>
+    <div class="sql-layout">
+      <aside class="panel schema" id="schema"><div class="eyebrow" style="margin-bottom:6px">Tables</div></aside>
+      <div class="editor">
+        <textarea id="sqlInput" spellcheck="false" aria-label="SQL query"></textarea>
+        <div class="editor-bar">
+          <button class="btn" id="runSql" type="button">Run query</button>
+          <select id="examples" aria-label="Example queries"><option value="">Example queries…</option></select>
+          <span class="muted" style="font-size:.8rem">Ctrl+Enter to run · read-only · up to 500 rows</span>
+        </div>
+        <div class="sql-out" id="sqlOut"></div>
+      </div>
+    </div>
+  </section>
+</main>
+
+<div class="scrim" id="scrim" hidden></div>
+<aside class="drawer" id="drawer" hidden aria-label="Event details">
+  <div class="drawer-head"><div><div class="eyebrow">Event and source records</div><strong class="mono" id="drawerTitle"></strong></div><button class="btn ghost sm" id="drawerClose" type="button">Close</button></div>
+  <div class="drawer-body" id="drawerBody"></div>
+</aside>
+
+<script>
+"use strict";
+const $ = (s, r = document) => r.querySelector(s);
+const esc = s => String(s ?? "").replace(/[&<>"']/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+const fmt = n => (n == null || n === "") ? "—" : (typeof n === "number" ? n.toLocaleString() : esc(n));
+const SRC = { police: { label: "Police", color: "var(--police)", cls: "police" }, fire_ems: { label: "Fire/EMS", color: "var(--fire)", cls: "fire_ems" }, "311": { label: "311", color: "var(--s311)", cls: "s311" } };
+const srcDot = s => `<span class="dot ${SRC[s] ? SRC[s].cls : ""}"></span>`;
+
+async function api(path, opts) {
+  const res = await fetch(path, opts);
+  const data = await res.json().catch(() => ({ error: `HTTP ${res.status}` }));
+  return { ok: res.ok, status: res.status, data };
+}
+
+/* ---------- tabs ---------- */
+function showView(name) {
+  document.querySelectorAll(".tab").forEach(t => t.setAttribute("aria-selected", t.dataset.view === name));
+  document.querySelectorAll(".view").forEach(v => v.hidden = v.id !== "view-" + name);
+  try { localStorage.setItem("sfintel-view", name); } catch (e) {}
+  if (name === "sql") loadSchema();
+}
+document.querySelectorAll(".tab").forEach(t => t.addEventListener("click", () => showView(t.dataset.view)));
+
+/* ---------- table rendering ---------- */
+function isNum(v) { return typeof v === "number"; }
+function cellHtml(col, v) {
+  if (v == null) return '<span class="muted">null</span>';
+  if (col === "event_id" && /^(police|fire_ems|311):/.test(v)) return `<button class="evlink" data-ev="${esc(v)}">${esc(v)}</button>`;
+  if (Array.isArray(v)) return esc(v.join(", "));
+  if (typeof v === "object") return esc(JSON.stringify(v));
+  return isNum(v) ? v.toLocaleString(undefined, { maximumFractionDigits: 2 }) : esc(v);
+}
+function tableHtml(cols, rows, cls = "") {
+  const numeric = cols.map((_, i) => rows.length > 0 && rows.every(r => r[i] == null || isNum(r[i])));
+  const head = cols.map((c, i) => `<th class="${numeric[i] ? "n" : ""}">${esc(c)}</th>`).join("");
+  const body = rows.map(r => "<tr>" + r.map((v, i) => `<td class="${numeric[i] ? "n" : (String(v ?? "").length > 60 ? "wrap" : "")}">${cellHtml(cols[i], v)}</td>`).join("") + "</tr>").join("");
+  return `<div class="table-wrap ${cls}"><table><thead><tr>${head}</tr></thead><tbody>${body}</tbody></table></div>`;
+}
+function objTable(objs, cls = "") {
+  if (!objs || !objs.length) return '<p class="muted" style="margin:0;font-size:.85rem">None</p>';
+  const cols = Object.keys(objs[0]);
+  return tableHtml(cols, objs.map(o => cols.map(c => o[c])), cls);
+}
+
+/* ---------- SQL highlighting (light) ---------- */
+const KW = /\b(SELECT|FROM|WHERE|GROUP BY|ORDER BY|HAVING|LIMIT|WITH|AS|JOIN|LEFT JOIN|ON|AND|OR|NOT|IN|IS|NULL|CASE|WHEN|THEN|ELSE|END|COUNT|SUM|AVG|MIN|MAX|DISTINCT|FILTER|OVER|PARTITION BY|INTERVAL|BETWEEN|LIKE|ILIKE|DESC|ASC|UNION ALL|QUALIFY|USING)\b/gi;
+function hlSql(sql) {
+  return esc(sql).replace(/'[^']*'/g, m => `<span class="str">${m}</span>`).replace(KW, m => `<span class="kw">${m}</span>`);
+}
+
+/* ---------- markdown (small, safe: escapes first) ---------- */
+function inline(s) {
+  s = esc(s);
+  s = s.replace(/`([^`]+)`/g, "<code>$1</code>");
+  s = s.replace(/\*\*([^*]+)\*\*/g, "<strong>$1</strong>");
+  s = s.replace(/(^|[^*])\*([^*\s][^*]*)\*/g, "$1<em>$2</em>");
+  // citations: [police:123] or [fire_ems:1, fire_ems:2]
+  s = s.replace(/\[((?:(?:police|fire_ems|311):[\w-]+(?:,\s*)?)+)\]/g, (_, ids) =>
+    ids.split(/,\s*/).filter(Boolean).map(id => `<button class="cite" data-ev="${id}">${srcDot(id.split(":")[0])}${id}</button>`).join(" "));
+  return s;
+}
+function md(src) {
+  const lines = String(src || "").replace(/\r/g, "").split("\n");
+  let out = "", i = 0;
+  while (i < lines.length) {
+    const line = lines[i];
+    if (!line.trim()) { i++; continue; }
+    let m;
+    if ((m = line.match(/^(#{1,4})\s+(.*)/))) { out += `<h${m[1].length + 1}>${inline(m[2])}</h${m[1].length + 1}>`; i++; continue; }
+    if (/^\s*\|.*\|\s*$/.test(line)) {
+      const rows = [];
+      while (i < lines.length && /^\s*\|.*\|\s*$/.test(lines[i])) { rows.push(lines[i]); i++; }
+      const cells = r => r.trim().replace(/^\||\|$/g, "").split("|").map(c => c.trim());
+      const body = rows.filter(r => !/^\s*\|[\s:|-]+\|\s*$/.test(r)).map(cells);
+      if (body.length) {
+        out += `<div class="table-wrap"><table><thead><tr>${body[0].map(c => `<th>${inline(c)}</th>`).join("")}</tr></thead><tbody>` +
+          body.slice(1).map(r => "<tr>" + r.map(c => `<td class="wrap">${inline(c)}</td>`).join("") + "</tr>").join("") + "</tbody></table></div>";
+      }
+      continue;
+    }
+    if (/^\s*([-*]|\d+\.)\s+/.test(line)) {
+      const ordered = /^\s*\d+\./.test(line);
+      const items = [];
+      while (i < lines.length && /^\s*([-*]|\d+\.)\s+/.test(lines[i])) {
+        let item = lines[i].replace(/^\s*([-*]|\d+\.)\s+/, ""); i++;
+        while (i < lines.length && lines[i].trim() && !/^\s*([-*]|\d+\.)\s+/.test(lines[i]) && /^\s{2,}/.test(lines[i])) { item += " " + lines[i].trim(); i++; }
+        items.push(`<li>${inline(item)}</li>`);
+      }
+      out += ordered ? `<ol>${items.join("")}</ol>` : `<ul>${items.join("")}</ul>`;
+      continue;
+    }
+    const para = [];
+    while (i < lines.length && lines[i].trim() && !/^(#{1,4})\s|^\s*([-*]|\d+\.)\s+|^\s*\|/.test(lines[i])) { para.push(lines[i]); i++; }
+    out += `<p>${inline(para.join(" "))}</p>`;
+  }
+  return out;
+}
+
+/* ================= ASK ================= */
+const SUGGESTIONS = [
+  "What changed around 16th & Mission in the last 30 days?",
+  "Which neighborhoods have the slowest fire/EMS response times?",
+  "Where is the 311 graffiti backlog worst, and how old is it?",
+  "Compare 6th & Market with 16th & Mission across all three systems.",
+  "What are the busiest hours for police incidents in the Tenderloin?",
+  "Which intersections had the biggest jump in activity this month?"
+];
+let convId = newId();
+let asking = false;
+function newId() { return Math.random().toString(36).slice(2, 10); }
+
+const suggestEl = $("#suggest");
+SUGGESTIONS.forEach(s => { const b = document.createElement("button"); b.type = "button"; b.textContent = s; b.onclick = () => ask(s); suggestEl.appendChild(b); });
+
+const askInput = $("#askInput");
+askInput.addEventListener("input", () => { askInput.style.height = "auto"; askInput.style.height = Math.min(askInput.scrollHeight, 180) + "px"; });
+askInput.addEventListener("keydown", e => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); $("#askForm").requestSubmit(); } });
+$("#askForm").addEventListener("submit", e => { e.preventDefault(); const q = askInput.value.trim(); if (q) ask(q); });
+$("#newChat").addEventListener("click", async () => {
+  if (asking) return;
+  await api("/api/reset", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ conversation_id: convId }) });
+  convId = newId();
+  $("#thread").innerHTML = ""; $("#thread").appendChild(helloEl);
+  askInput.focus();
+});
+const helloEl = $("#hello");
+
+function profileSummary(d) {
+  if (!d || d.error) return `<div class="err">${esc(d && d.error || "No result")}${d && d.candidates && d.candidates.length ? "\nDid you mean: " + esc(d.candidates.join(", ")) : ""}</div>`;
+  const act = (d.activity_by_source || []).map(a => `${srcDot(a.source)}${SRC[a.source].label} <b class="num">${fmt(a.events_90d)}</b>`).join(" &nbsp; ");
+  return `<div class="res-meta"><span>Profile of <b>${esc(d.location.label)}</b> (${esc(d.radius_m)} m) · ${act}</span>
+    <button class="btn ghost sm" type="button" data-open-place="${esc(d.resolved ? d.resolved.input : d.location.label)}" data-r="${esc(d.radius_m)}">Open in Places</button></div>`;
+}
+
+async function ask(question) {
+  if (asking) return;
+  asking = true; $("#askBtn").disabled = true;
+  if (helloEl.parentNode) helloEl.remove();
+  askInput.value = ""; askInput.style.height = "auto";
+  const thread = $("#thread");
+  const q = document.createElement("div"); q.className = "q"; q.textContent = question; thread.appendChild(q);
+  const turn = document.createElement("div"); turn.className = "turn";
+  turn.innerHTML = `<details class="work" open><summary><span class="spinner"></span><span class="wlabel">Working…</span></summary><div class="steps"></div></details><div class="ans"></div>`;
+  thread.appendChild(turn);
+  turn.scrollIntoView({ behavior: "smooth", block: "end" });
+  const steps = $(".steps", turn), wlabel = $(".wlabel", turn), work = $("details.work", turn);
+  const calls = {};
+  let nTools = 0;
+
+  function handle(ev) {
+    if (ev.type === "step") {
+      const s = document.createElement("div"); s.className = "step-line";
+      s.textContent = `step ${ev.step} · ${ev.stop_reason === "tool_use" ? "asked for a tool" : ev.stop_reason === "end_turn" ? "wrote the answer" : ev.stop_reason} · ${ev.seconds}s`;
+      steps.appendChild(s);
+      wlabel.textContent = ev.stop_reason === "end_turn" ? "Writing answer…" : `Step ${ev.step}…`;
+    } else if (ev.type === "tool_call") {
+      nTools++;
+      const c = document.createElement("div"); c.className = "tcall";
+      if (ev.name === "run_sql") {
+        c.innerHTML = `<div class="head"><b>run_sql</b> · ${esc(ev.input.purpose || "")}</div><pre class="sql">${hlSql(ev.input.sql || "")}</pre><div class="res"><span class="muted" style="font-size:.8rem">Running…</span></div>`;
+      } else {
+        c.innerHTML = `<div class="head"><b>${esc(ev.name)}</b> · ${esc(ev.input.place || "")}${ev.input.radius_m != null ? ` · ${esc(ev.input.radius_m)} m` : ""}</div><div class="res"><span class="muted" style="font-size:.8rem">Running…</span></div>`;
+      }
+      steps.appendChild(c); calls[ev.id] = c;
+      wlabel.textContent = `Running ${ev.name}…`;
+    } else if (ev.type === "tool_result") {
+      const c = calls[ev.id]; if (!c) return;
+      const res = $(".res", c);
+      if (ev.is_error) { c.classList.add("error"); res.innerHTML = ev.name === "location_profile" && ev.data ? profileSummary(ev.data) : `<div class="err">${esc(ev.text)}</div>`; return; }
+      if (ev.name === "run_sql" && ev.data) {
+        const d = ev.data;
+        res.innerHTML = `<div class="res-meta"><span>${d.rows.length.toLocaleString()} row${d.rows.length === 1 ? "" : "s"}${d.truncated ? " · truncated" : ""}</span></div>` + tableHtml(d.columns, d.rows, "res-table");
+      } else if (ev.name === "location_profile") {
+        res.innerHTML = profileSummary(ev.data);
+      }
+    } else if (ev.type === "answer") {
+      $(".spinner", turn)?.remove();
+      wlabel.textContent = `${nTools} tool call${nTools === 1 ? "" : "s"} · ${ev.seconds}s · show work`;
+      work.open = false;
+      if (!nTools) work.hidden = true;
+      $(".ans", turn).innerHTML = `<div class="answer">${md(ev.text)}</div><div class="ans-foot" style="margin-top:6px">${esc(ev.model)} · conversation so far ~$${Number(ev.cost_usd).toFixed(3)}</div>`;
+    } else if (ev.type === "error") {
+      $(".spinner", turn)?.remove();
+      wlabel.textContent = "Stopped";
+      $(".ans", turn).innerHTML = `<div class="err">${esc(ev.message)}</div>`;
+    }
+  }
+
+  try {
+    const res = await fetch("/api/ask", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ question, conversation_id: convId }) });
+    if (!res.ok || !res.body) throw new Error((await res.json().catch(() => ({}))).error || `HTTP ${res.status}`);
+    const reader = res.body.getReader(), dec = new TextDecoder();
+    let buf = "";
+    for (;;) {
+      const { value, done } = await reader.read();
+      if (done) break;
+      buf += dec.decode(value, { stream: true });
+      let nl;
+      while ((nl = buf.indexOf("\n")) >= 0) { const line = buf.slice(0, nl); buf = buf.slice(nl + 1); if (line.trim()) handle(JSON.parse(line)); }
+    }
+    if (buf.trim()) handle(JSON.parse(buf));
+  } catch (e) {
+    handle({ type: "error", message: "Could not reach the assistant: " + e.message });
+  } finally {
+    asking = false; $("#askBtn").disabled = false; askInput.focus();
+  }
+}
+
+/* ================= PLACES ================= */
+let radius = 100;
+document.querySelectorAll("#radiusSeg button").forEach(b => b.addEventListener("click", () => {
+  radius = Number(b.dataset.r);
+  document.querySelectorAll("#radiusSeg button").forEach(x => x.setAttribute("aria-pressed", x === b));
+  if ($("#placeInput").value.trim()) loadPlace($("#placeInput").value.trim());
+}));
+$("#placeForm").addEventListener("submit", e => { e.preventDefault(); const p = $("#placeInput").value.trim(); if (p) loadPlace(p); });
+
+function trendPill(last, prior) {
+  if (!prior && !last) return '<span class="trend flat">no activity</span>';
+  if (!prior) return '<span class="trend up">new</span>';
+  const pct = Math.round((last - prior) / prior * 100);
+  const cls = pct > 25 ? "up" : pct < -25 ? "down" : "flat";
+  return `<span class="trend ${cls}">${pct > 0 ? "+" : ""}${pct}% vs prior</span>`;
+}
+
+let OVERVIEW = null;
+function renderOverview() {
+  const o = OVERVIEW; if (!o) return;
+  const max = Math.max(...o.busiest.map(b => b.total));
+  const list = o.busiest.map(b => `<button type="button" data-open-place="${esc(b.label)}"><span><span class="pl">${esc(b.label)}</span> <span class="muted" style="font-size:.8rem">${esc(b.neighborhood || "")}</span></span>
+    <span style="display:flex;gap:10px;align-items:center"><span class="num muted" style="font-size:.8rem">${b.total.toLocaleString()}</span><span class="stackline" style="width:${Math.round(140 * b.total / max)}px"><i style="width:${100 * b.police / b.total}%;background:var(--police)"></i><i style="width:${100 * b.fire_ems / b.total}%;background:var(--fire)"></i><i style="width:${100 * b.s311 / b.total}%;background:var(--s311)"></i></span></span></button>`).join("");
+  const match = o.sources.map(s => `<div class="match-row"><span>${srcDot(s.source)}${SRC[s.source].label}</span><div class="mbar" title="exact ${s.exact_pct}% · nearest ${s.nearest_pct}% · unmatched ${s.unmatched_pct}%"><i style="width:${s.exact_pct}%;background:var(--good)"></i><i style="width:${s.nearest_pct}%;background:color-mix(in srgb, var(--good) 35%, var(--surface))"></i></div></div>`).join("");
+  $("#placeOut").innerHTML = `<div class="grid cols-2">
+    <div class="panel"><h3>Busiest intersections, all three systems</h3><div class="places-list">${list}</div>
+      <p class="muted" style="font-size:.78rem;margin:8px 0 0">${srcDot("police")}Police ${srcDot("fire_ems")}Fire/EMS ${srcDot("311")}311 · click a place to open its profile</p></div>
+    <div class="grid" style="align-content:start">
+      <div class="panel"><h3>Dataset</h3><div class="stat-pair">
+        ${o.sources.map(s => `<div><span class="eyebrow">${SRC[s.source].label}</span><span class="big">${s.events.toLocaleString()}</span></div>`).join("")}
+      </div><p class="muted" style="font-size:.84rem;margin:10px 0 0">${o.window.start} to ${o.window.end} · ${o.locations.places.toLocaleString()} intersections · ${o.locations.in_all_three.toLocaleString()} seen by all three systems</p></div>
+      <div class="panel"><h3>How records were matched to a place</h3>${match}
+        <p class="muted" style="font-size:.78rem;margin:4px 0 0"><span class="dot" style="background:var(--good)"></span>exact name <span class="dot" style="background:color-mix(in srgb, var(--good) 35%, var(--surface))"></span>nearest intersection · the rest has no usable location</p></div>
+    </div></div>`;
+}
+
+async function loadPlace(place) {
+  $("#placeInput").value = place;
+  $("#placeOut").innerHTML = '<p class="muted">Loading…</p>';
+  const { ok, data } = await api(`/api/profile?place=${encodeURIComponent(place)}&radius=${radius}`);
+  if (!ok) {
+    const cands = (data.candidates || []).map(c => `<button type="button" class="btn ghost sm" data-open-place="${esc(c)}">${esc(c)}</button>`).join(" ");
+    $("#placeOut").innerHTML = `<div class="err">${esc(data.error)}</div>${cands ? `<p style="margin:12px 0 6px" class="muted">Did you mean</p><div style="display:flex;gap:6px;flex-wrap:wrap">${cands}</div>` : ""}`;
+    return;
+  }
+  renderPlace(data);
+}
+
+function renderPlace(d) {
+  const loc = d.location, bySrc = {};
+  (d.activity_by_source || []).forEach(a => bySrc[a.source] = a);
+  const kpis = ["police", "fire_ems", "311"].map(s => {
+    const a = bySrc[s] || { events_90d: 0, last_30d: 0, prior_30d_avg: 0, matched_by_distance: 0 };
+    return `<div class="panel kpi ${SRC[s].cls}"><div class="eyebrow">${SRC[s].label} · 90 days</div><div class="big">${a.events_90d.toLocaleString()}</div>
+      <div class="row"><span>Last 30 days</span><b>${a.last_30d.toLocaleString()}</b></div>
+      <div class="row"><span>Earlier 30-day average</span><b>${a.prior_30d_avg.toLocaleString()}</b></div>
+      <div class="row" style="margin-top:6px"><span>${trendPill(a.last_30d, a.prior_30d_avg)}</span><span>${a.matched_by_distance ? a.matched_by_distance.toLocaleString() + " matched by distance" : ""}</span></div></div>`;
+  }).join("");
+
+  const area = d.intersections_in_area || [];
+  const maxA = Math.max(1, ...area.map(i => i.police + i.fire_ems + i["311"]));
+  const areaRows = area.map(i => `<tr><td>${esc(i.label)}</td><td class="n">${fmt(i.meters)} m</td><td class="n">${fmt(i.police)}</td><td class="n">${fmt(i.fire_ems)}</td><td class="n">${fmt(i["311"])}</td>
+    <td><span class="stackline" style="width:${Math.max(2, Math.round(120 * (i.police + i.fire_ems + i["311"]) / maxA))}px"><i style="width:${100 * i.police / Math.max(1, i.police + i.fire_ems + i["311"])}%;background:var(--police)"></i><i style="width:${100 * i.fire_ems / Math.max(1, i.police + i.fire_ems + i["311"])}%;background:var(--fire)"></i><i style="width:${100 * i["311"] / Math.max(1, i.police + i.fire_ems + i["311"])}%;background:var(--s311)"></i></span></td></tr>`).join("");
+
+  const cats = {};
+  (d.top_categories || []).forEach(c => (cats[c.source] = cats[c.source] || []).push(c));
+  const catHtml = ["police", "fire_ems", "311"].filter(s => cats[s]).map(s => {
+    const max = Math.max(...cats[s].map(c => c.n));
+    return `<div><div class="eyebrow" style="margin-bottom:6px">${srcDot(s)}${SRC[s].label}</div>` + cats[s].map(c =>
+      `<div class="cat"><span>${esc(c.category || "Unclassified")}</span><span class="num" style="text-align:right">${c.n.toLocaleString()}</span><div class="bar"><i style="width:${100 * c.n / max}%;background:${SRC[s].color}"></i></div></div>`).join("") + "</div>";
+  }).join("");
+
+  const fr = d.fire_ems_response || {};
+  const recent = (d.recent_events || []).map(e => `<tr><td class="num">${esc(e.occurred_at)}</td><td>${srcDot(e.source)}${SRC[e.source].label}</td><td class="wrap">${esc(e.category || "")}${e.subcategory ? ` <span class="muted">/ ${esc(e.subcategory)}</span>` : ""}</td><td>${esc(e.status || "")}</td><td><button class="evlink" data-ev="${esc(e.event_id)}">${esc(e.event_id)}</button></td></tr>`).join("");
+
+  $("#placeOut").innerHTML = `<div class="grid">
+    <div class="panel place-head"><div style="min-width:0">
+      <div class="eyebrow">${esc(loc.neighborhood || "")} · ${d.radius_m > 0 ? `${d.radius_m} m area` : "exact intersection"} · data through ${esc(d.data_through)}</div>
+      <h2>${esc(loc.label)}</h2>
+      <div class="resolved">Matched “${esc(d.resolved.input)}” by ${esc(d.resolved.method)} · seen in ${(loc.seen_in_sources || []).map(s => srcDot(s) + SRC[s].label).join(", ")}</div>
+      ${loc.aliases && loc.aliases.length ? `<div class="aliases">Also known as: ${esc(loc.aliases.join(" · "))}</div>` : ""}
+    </div><button class="btn ghost" type="button" id="askAboutPlace">Ask the AI about this place</button></div>
+    <div class="grid cols-3">${kpis}</div>
+    <div class="grid cols-2">
+      <div class="panel"><h3>Intersections in this area</h3><div class="table-wrap"><table><thead><tr><th>Intersection</th><th class="n">Distance</th><th class="n">Police</th><th class="n">Fire/EMS</th><th class="n">311</th><th></th></tr></thead><tbody>${areaRows}</tbody></table></div>
+        ${d.radius_m > 0 && area.length > 1 ? '<p class="muted" style="font-size:.78rem;margin:8px 0 0">Police publish locations snapped to a nearby intersection, so a small area gives a truer count than one corner.</p>' : ""}</div>
+      <div class="panel"><h3>Top categories</h3><div class="grid cols-3" style="gap:18px">${catHtml || '<p class="muted">No events</p>'}</div></div>
+    </div>
+    <div class="grid cols-2">
+      <div class="panel"><h3>Fire/EMS response time</h3>${fr.calls_with_unit_on_scene ? `<div class="stat-pair"><div><span class="eyebrow">Median</span><span class="big">${fr.median_minutes_to_scene} min</span></div><div><span class="eyebrow">90th percentile</span><span class="big">${fr.p90_minutes_to_scene} min</span></div><div><span class="eyebrow">Calls</span><span class="big">${fr.calls_with_unit_on_scene.toLocaleString()}</span></div></div><p class="muted" style="font-size:.78rem;margin:8px 0 0">Call received to first unit on scene.</p>` : '<p class="muted" style="margin:0">No fire/EMS calls with an on-scene time here.</p>'}</div>
+      <div class="panel"><h3>Open 311 requests</h3>${objTable((d.open_311_requests || []).map(o => ({ type: o.service_name, open: o.open_requests, "oldest (days)": o.oldest_days })))}</div>
+    </div>
+    <div class="panel"><h3>Most recent events</h3><div class="table-wrap"><table><thead><tr><th>Time</th><th>Source</th><th>Category</th><th>Status</th><th>Event ID</th></tr></thead><tbody>${recent}</tbody></table></div></div>
+  </div>`;
+  $("#askAboutPlace").onclick = () => { showView("ask"); ask(`What's going on around ${loc.label} (within ${d.radius_m} m)? What stands out and what changed recently?`); };
+}
+
+/* ================= SQL ================= */
+const EXAMPLES = [
+  ["Events per source and match method", "SELECT source, match_method, count(*) AS n\nFROM event\nGROUP BY 1, 2\nORDER BY 1, n DESC"],
+  ["Fire/EMS median response by neighborhood", "SELECT neighborhood,\n       count(*) AS calls,\n       round(median(epoch(first_on_scene_at - occurred_at)) / 60, 1) AS median_min\nFROM stg_fire\nWHERE first_on_scene_at > occurred_at\nGROUP BY 1\nHAVING count(*) > 200\nORDER BY median_min DESC"],
+  ["Police incidents by hour of day", "SELECT hour(occurred_at) AS hour, count(*) AS incidents\nFROM stg_police\nGROUP BY 1 ORDER BY 1"],
+  ["Oldest open 311 requests by type", "SELECT service_name, count(*) AS open_requests,\n       max(date_diff('day', occurred_at, now())) AS oldest_days\nFROM stg_311\nWHERE status = 'Open'\nGROUP BY 1 ORDER BY open_requests DESC"],
+  ["Intersections with the most aliases", "SELECT label, len(aliases) AS n_aliases, aliases, seen_in_sources\nFROM location\nWHERE len(aliases) > 0\nORDER BY n_aliases DESC LIMIT 20"],
+  ["Grain: raw rows per police incident", "SELECT source_rows, count(*) AS incidents\nFROM stg_police\nGROUP BY 1 ORDER BY 1"]
+];
+const exSel = $("#examples");
+EXAMPLES.forEach((e, i) => { const o = document.createElement("option"); o.value = i; o.textContent = e[0]; exSel.appendChild(o); });
+exSel.addEventListener("change", () => { if (exSel.value !== "") { $("#sqlInput").value = EXAMPLES[exSel.value][1]; runSql(); } });
+$("#sqlInput").value = EXAMPLES[0][1];
+$("#runSql").addEventListener("click", runSql);
+$("#sqlInput").addEventListener("keydown", e => {
+  if ((e.ctrlKey || e.metaKey) && e.key === "Enter") { e.preventDefault(); runSql(); }
+  if (e.key === "Tab") { e.preventDefault(); const t = e.target, s = t.selectionStart; t.setRangeText("  ", s, t.selectionEnd, "end"); }
+});
+async function runSql() {
+  const sql = $("#sqlInput").value.trim(); if (!sql) return;
+  $("#sqlOut").innerHTML = '<p class="muted">Running…</p>';
+  const t = performance.now();
+  const { ok, data } = await api("/api/sql", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ sql }) });
+  const ms = Math.round(performance.now() - t);
+  if (!ok) { $("#sqlOut").innerHTML = `<div class="err">${esc(data.error)}</div>`; return; }
+  $("#sqlOut").innerHTML = `<div class="res-meta" style="margin-bottom:6px"><span>${data.rows.length.toLocaleString()} rows${data.truncated ? " · truncated at 500" : ""} · ${ms} ms</span></div>` + tableHtml(data.columns, data.rows);
+}
+let schemaLoaded = false;
+async function loadSchema() {
+  if (schemaLoaded) return; schemaLoaded = true;
+  runSql();
+  const { ok, data } = await api("/api/schema");
+  if (!ok) { $("#schema").insertAdjacentHTML("beforeend", `<div class="err">${esc(data.error)}</div>`); return; }
+  $("#schema").insertAdjacentHTML("beforeend", data.map((t, i) => `<details ${i === 0 ? "open" : ""}><summary>${esc(t.table)}<span>${t.rows.toLocaleString()}</span></summary><ul>${t.columns.map(c => `<li><button type="button" data-ins="${esc(c.name)}">${esc(c.name)}<span>${esc(c.type.toLowerCase())}</span></button></li>`).join("")}</ul></details>`).join(""));
+}
+$("#schema").addEventListener("click", e => {
+  const b = e.target.closest("[data-ins]"); if (!b) return;
+  const t = $("#sqlInput"); t.setRangeText(b.dataset.ins, t.selectionStart, t.selectionEnd, "end"); t.focus();
+});
+
+/* ================= EVENT DRAWER ================= */
+function kv(obj) {
+  return `<dl class="kv">${Object.entries(obj).map(([k, v]) => `<dt>${esc(k)}</dt><dd>${v == null ? '<span class="muted">null</span>' : Array.isArray(v) ? esc(v.join(", ")) : esc(v)}</dd>`).join("")}</dl>`;
+}
+async function openEvent(id) {
+  $("#drawerTitle").innerHTML = `${srcDot(id.split(":")[0])}${esc(id)}`;
+  $("#drawerBody").innerHTML = '<p class="muted">Loading…</p>';
+  $("#drawer").hidden = false; $("#scrim").hidden = false;
+  const { ok, data } = await api(`/api/event?id=${encodeURIComponent(id)}`);
+  if (!ok) { $("#drawerBody").innerHTML = `<div class="err">${esc(data.error)}</div>`; return; }
+  const ev = data.event, n = data.raw_rows.length;
+  const unit = { police: "offense rows", fire_ems: "unit rows", "311": "row" }[ev.source];
+  const evShown = { occurred_at: ev.occurred_at, category: ev.category, subcategory: ev.subcategory, description: ev.description, status: ev.status, raw_address: ev.raw_address, match_method: ev.match_method, match_distance_m: ev.match_distance_m, neighborhood: ev.neighborhood };
+  $("#drawerBody").innerHTML = `
+    <div class="panel"><h3>Unified event</h3>${kv(evShown)}</div>
+    ${data.location ? `<div class="panel"><h3>Linked place</h3><p style="margin:0 0 6px"><strong>${esc(data.location.label)}</strong> <span class="muted">· ${esc(data.location.neighborhood || "")}</span></p>
+      ${data.location.aliases && data.location.aliases.length ? `<p class="muted" style="margin:0 0 8px;font-size:.82rem">Also known as ${esc(data.location.aliases.join(" · "))}</p>` : ""}
+      <button class="btn ghost sm" type="button" data-open-place="${esc(data.location.label)}">Open place profile</button></div>`
+      : `<div class="panel"><h3>Linked place</h3><p class="muted" style="margin:0">None. The source record has no usable location.</p></div>`}
+    <div class="grain-note">${n === 1 ? `1 raw row in <code>${esc(data.raw_table)}</code> became this event.` : `${n} raw ${unit} in <code>${esc(data.raw_table)}</code> were combined into this one event.`}</div>
+    ${data.staged ? `<div class="panel"><h3>Cleaned source record</h3>${kv(data.staged)}</div>` : ""}
+    <div class="panel"><h3>Raw rows as published by the source</h3>${objTable(data.raw_rows)}</div>`;
+}
+function closeDrawer() { $("#drawer").hidden = true; $("#scrim").hidden = true; }
+$("#drawerClose").addEventListener("click", closeDrawer);
+$("#scrim").addEventListener("click", closeDrawer);
+document.addEventListener("keydown", e => { if (e.key === "Escape") closeDrawer(); });
+
+/* global clicks: event links and "open place" buttons anywhere */
+document.addEventListener("click", e => {
+  const ev = e.target.closest("[data-ev]");
+  if (ev) { openEvent(ev.dataset.ev); return; }
+  const pl = e.target.closest("[data-open-place]");
+  if (pl) {
+    closeDrawer();
+    if (pl.dataset.r != null) { radius = Number(pl.dataset.r); document.querySelectorAll("#radiusSeg button").forEach(x => x.setAttribute("aria-pressed", Number(x.dataset.r) === radius)); }
+    showView("places"); loadPlace(pl.dataset.openPlace);
+  }
+});
+
+/* ---------- boot ---------- */
+(async function boot() {
+  let ok = false, data = { error: "Could not reach the SF Intel server. Is `python -m src.server` running?" };
+  try { ({ ok, data } = await api("/api/overview")); } catch (e) {}
+  if (ok) {
+    OVERVIEW = data;
+    $("#topMeta").innerHTML = `<span class="chip">${esc(data.window.start)} → <b>${esc(data.window.end)}</b></span>` +
+      ["police", "fire_ems", "311"].map(k => data.sources.find(s => s.source === k)).filter(Boolean)
+        .map(s => `<span class="chip" title="${SRC[s.source].label} events">${srcDot(s.source)}${SRC[s.source].label} <b>${s.events.toLocaleString()}</b></span>`).join("");
+    data.sources.sort((a, b) => ["police", "fire_ems", "311"].indexOf(a.source) - ["police", "fire_ems", "311"].indexOf(b.source));
+    renderOverview();
+  } else {
+    $("#placeOut").innerHTML = `<div class="err">${esc(data.error)}</div>`;
+  }
+  // Deep links: ?view=places&place=16th%20%26%20Mission&radius=100  ·  ?view=sql  ·  ?event=police:123
+  const qs = new URLSearchParams(location.search);
+  let v = "ask"; try { v = localStorage.getItem("sfintel-view") || "ask"; } catch (e) {}
+  if (qs.get("view")) v = qs.get("view");
+  showView(v);
+  if (qs.get("radius")) { radius = Number(qs.get("radius")); document.querySelectorAll("#radiusSeg button").forEach(x => x.setAttribute("aria-pressed", Number(x.dataset.r) === radius)); }
+  if (qs.get("place")) loadPlace(qs.get("place"));
+  if (qs.get("event")) openEvent(qs.get("event"));
+  if (qs.get("q")) { showView("ask"); ask(qs.get("q")); }
+})();
+</script>
+</body>
+</html>

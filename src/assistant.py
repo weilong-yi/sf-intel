@@ -11,7 +11,10 @@ Governance, which is the point of the demo:
   - the DuckDB connection is read-only with file/network access disabled
   - every question, query and answer is appended to data/audit_log.jsonl
 
-Run:  python -m src.assistant "What changed at 16th & Mission in the last 30 days?"
+The loop reports what it does as events (step, tool_call, tool_result, answer).
+The terminal prints them; the web UI (src/server.py) streams them to the browser.
+
+Run:  python -m src.assistant "What changed around 16th & Mission in the last 30 days?"
       python -m src.assistant          (interactive; follow-up questions keep context)
 """
 
@@ -22,6 +25,7 @@ import re
 import sys
 import time
 from pathlib import Path
+from typing import Callable
 
 import anthropic
 import duckdb
@@ -53,15 +57,21 @@ def connect() -> duckdb.DuckDBPyConnection:
     return con
 
 
-def describe_schema(con) -> str:
-    lines = []
+def schema_info(con) -> list[dict]:
+    out = []
     for table in SCHEMA_TABLES:
         cols = con.execute(
             "SELECT column_name, data_type FROM information_schema.columns "
             "WHERE table_name = ? ORDER BY ordinal_position", [table]).fetchall()
         n = con.execute(f"SELECT count(*) FROM {table}").fetchone()[0]
-        lines.append(f"{table} ({n:,} rows): " + ", ".join(f"{c} {t}" for c, t in cols))
-    return "\n".join(lines)
+        out.append({"table": table, "rows": n, "columns": [{"name": c, "type": t} for c, t in cols]})
+    return out
+
+
+def describe_schema(con) -> str:
+    return "\n".join(
+        f"{t['table']} ({t['rows']:,} rows): " + ", ".join(f"{c['name']} {c['type']}" for c in t["columns"])
+        for t in schema_info(con))
 
 
 # --------------------------------------------------------------------- tools
@@ -70,7 +80,9 @@ FORBIDDEN = re.compile(
     r"install|load|pragma|set|call|checkpoint)\b", re.I)
 
 
-def run_sql(con, sql: str) -> str:
+def query_rows(con, sql: str, limit: int = ROW_LIMIT) -> dict:
+    """Validate and run one read-only query. Returns columns, rows, truncated.
+    Raises ValueError for disallowed SQL, duckdb.Error for bad SQL."""
     sql = sql.strip().rstrip(";").strip()
     if not re.match(r"^(select|with)\b", sql, re.I):
         raise ValueError("Only a single SELECT (or WITH ... SELECT) query is allowed.")
@@ -79,58 +91,76 @@ def run_sql(con, sql: str) -> str:
     if FORBIDDEN.search(re.sub(r"'[^']*'", "''", sql)):  # ignore words inside string literals
         raise ValueError("Query contains a forbidden keyword (writes/config are not allowed).")
 
-    cur = con.execute(f"SELECT * FROM ({sql}) LIMIT {ROW_LIMIT + 1}")
+    cur = con.execute(f"SELECT * FROM ({sql}) LIMIT {limit + 1}")
     cols = [d[0] for d in cur.description]
     rows = cur.fetchall()
-    truncated = len(rows) > ROW_LIMIT
-    rows = rows[:ROW_LIMIT]
+    return {"columns": cols, "rows": rows[:limit], "truncated": len(rows) > limit}
 
+
+def rows_to_text(result: dict) -> str:
     def cell(v):
         s = "" if v is None else str(v)
         return s if len(s) <= CELL_CHARS else s[:CELL_CHARS] + "…"
 
-    out = [" | ".join(cols)] + [" | ".join(cell(v) for v in r) for r in rows]
-    footer = f"({len(rows)} rows{', TRUNCATED at limit - aggregate further' if truncated else ''})"
-    return "\n".join(out + [footer])
+    out = [" | ".join(result["columns"])] + [" | ".join(cell(v) for v in r) for r in result["rows"]]
+    note = ", TRUNCATED at limit - aggregate further" if result["truncated"] else ""
+    return "\n".join(out + [f"({len(result['rows'])} rows{note})"])
+
+
+def run_sql(con, sql: str) -> str:
+    return rows_to_text(query_rows(con, sql))
+
+
+def location_profile_data(con, place: str, radius_m: int) -> dict:
+    match = dossier.resolve(con, place)
+    if "error" in match:
+        return match
+    profile = dossier.build(con, match["location_id"], max(0, min(radius_m, 500)))
+    profile["resolved"] = {"input": place, "matched": match["label"], "method": match["method"]}
+    return profile
 
 
 def location_profile(con, place: str, radius_m: int) -> str:
-    match = dossier.resolve(con, place)
-    if "error" in match:
-        return json.dumps(match)
-    profile = dossier.build(con, match["location_id"], max(0, min(radius_m, 500)))
-    profile["resolved"] = {"input": place, "matched": match["label"], "method": match["method"]}
-    return json.dumps(profile, default=str)
+    return json.dumps(location_profile_data(con, place, radius_m), default=str)
 
 
-def execute_tool(con, name: str, args: dict) -> tuple[str, bool]:
-    """Returns (result_text, is_error). Errors go back to the model as tool
-    results so it can fix its query, instead of crashing the loop."""
+def execute_tool(con, name: str, args: dict) -> dict:
+    """Returns {"text": what the model sees, "is_error": bool, "data": structured
+    result for the UI}. Errors go back to the model as tool results so it can
+    fix its query, instead of crashing the loop."""
     try:
         if name == "run_sql":
-            return run_sql(con, args["sql"]), False
+            result = query_rows(con, args["sql"])
+            return {"text": rows_to_text(result), "is_error": False, "data": result}
         if name == "location_profile":
-            return location_profile(con, args["place"], args["radius_m"]), False
-        return f"Unknown tool: {name}", True
+            data = location_profile_data(con, args["place"], args["radius_m"])
+            return {"text": json.dumps(data, default=str), "is_error": "error" in data, "data": data}
+        return {"text": f"Unknown tool: {name}", "is_error": True, "data": None}
     except (ValueError, KeyError, duckdb.Error) as e:
-        return f"Error: {type(e).__name__}: {e}", True
+        return {"text": f"Error: {type(e).__name__}: {e}", "is_error": True, "data": None}
 
 
 # ---------------------------------------------------------------------- loop
+Event = dict
+EventHandler = Callable[[Event], None]
+
+
 class Assistant:
-    def __init__(self):
+    def __init__(self, con: duckdb.DuckDBPyConnection | None = None):
         load_dotenv()
         self.client = anthropic.Anthropic()
-        self.con = connect()
+        self.con = con or connect()
         self.system = SYSTEM_PROMPT.format(schema=describe_schema(self.con), row_limit=ROW_LIMIT)
         self.messages: list = []  # whole conversation, so follow-ups keep context
         self.usage = {"input": 0, "output": 0, "cache_read": 0, "cache_write": 0}
 
-    def ask(self, question: str) -> str:
+    def ask(self, question: str, on_event: EventHandler | None = None) -> str:
+        emit = on_event or print_event
         audit = {"ts": dt.datetime.now().isoformat(timespec="seconds"), "model": MODEL,
                  "question": question, "tool_calls": []}
         self.messages.append({"role": "user", "content": question})
         answer = None
+        started = time.time()
 
         for step in range(1, MAX_STEPS + 1):
             t = time.time()
@@ -148,7 +178,8 @@ class Assistant:
             self._track(response.usage)
             # Keep the full content (incl. thinking blocks) so the next call has the whole turn
             self.messages.append({"role": "assistant", "content": response.content})
-            print(f"{DIM}[step {step}] {response.stop_reason} · {time.time() - t:.1f}s{RESET}")
+            emit({"type": "step", "step": step, "stop_reason": response.stop_reason,
+                  "seconds": round(time.time() - t, 1)})
 
             if response.stop_reason == "refusal":
                 answer = "The model declined to answer this request."
@@ -164,13 +195,14 @@ class Assistant:
 
             results = []
             for tu in tool_uses:
-                self._print_call(tu.name, tu.input)
-                output, is_error = execute_tool(self.con, tu.name, tu.input)
-                self._print_result(output, is_error)
-                audit["tool_calls"].append({"tool": tu.name, "input": tu.input, "is_error": is_error,
-                                            "result_preview": output[:300]})
+                emit({"type": "tool_call", "id": tu.id, "name": tu.name, "input": tu.input})
+                out = execute_tool(self.con, tu.name, tu.input)
+                emit({"type": "tool_result", "id": tu.id, "name": tu.name,
+                      "is_error": out["is_error"], "text": out["text"], "data": out["data"]})
+                audit["tool_calls"].append({"tool": tu.name, "input": tu.input, "is_error": out["is_error"],
+                                            "result_preview": out["text"][:300]})
                 results.append({"type": "tool_result", "tool_use_id": tu.id,
-                                "content": output, "is_error": is_error})
+                                "content": out["text"], "is_error": out["is_error"]})
             # All results for this step go back in ONE user message
             self.messages.append({"role": "user", "content": results})
         else:
@@ -181,9 +213,10 @@ class Assistant:
         AUDIT_LOG.parent.mkdir(parents=True, exist_ok=True)
         with AUDIT_LOG.open("a", encoding="utf-8") as f:
             f.write(json.dumps(audit, default=str) + "\n")
+        emit({"type": "answer", "text": answer, "seconds": round(time.time() - started, 1),
+              "usage": dict(self.usage), "cost_usd": round(self.cost(), 4), "model": MODEL})
         return answer
 
-    # -- display helpers
     def _track(self, u):
         self.usage["input"] += u.input_tokens
         self.usage["output"] += u.output_tokens
@@ -193,20 +226,25 @@ class Assistant:
     def cost(self) -> float:
         return sum(self.usage[k] * PRICE_PER_MTOK[k] for k in self.usage) / 1e6
 
-    @staticmethod
-    def _print_call(name, args):
-        if name == "run_sql":
+
+# ------------------------------------------------------------ terminal output
+def print_event(ev: Event) -> None:
+    kind = ev["type"]
+    if kind == "step":
+        print(f"{DIM}[step {ev['step']}] {ev['stop_reason']} · {ev['seconds']}s{RESET}")
+    elif kind == "tool_call":
+        args = ev["input"]
+        if ev["name"] == "run_sql":
             print(f"{CYAN}→ run_sql: {args.get('purpose', '')}{RESET}")
             for line in args.get("sql", "").strip().splitlines():
                 print(f"{DIM}    {line}{RESET}")
         else:
-            print(f"{CYAN}→ {name}({json.dumps(args)}){RESET}")
-
-    @staticmethod
-    def _print_result(output, is_error):
-        lines = output.splitlines()
-        color = YELLOW if is_error else DIM
-        preview = lines[:8] if not output.startswith("{") else [output[:300] + "…"]
+            print(f"{CYAN}→ {ev['name']}({json.dumps(args)}){RESET}")
+    elif kind == "tool_result":
+        text = ev["text"]
+        lines = text.splitlines()
+        color = YELLOW if ev["is_error"] else DIM
+        preview = lines[:8] if not text.startswith("{") else [text[:300] + "…"]
         for line in preview:
             print(f"{color}    ← {line[:160]}{RESET}")
         if len(lines) > 8:
