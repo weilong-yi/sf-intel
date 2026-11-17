@@ -7,7 +7,11 @@ an alert with a short summary that cites the events behind it.
 Each run has two parts, deliberately separated:
 
   1. DETECT (plain SQL, no AI, free)
-       - new events in the area since the last check
+       - new events in the area: every matching event since the watch was
+         created that this watch has not reported yet. "Not reported yet" is
+         a list of event ids, not a timestamp, because police publish many
+         reports days after the incident time we store as occurred_at; a
+         timestamp checkpoint would skip those late reports forever.
        - jumps: a source/category whose last 7 days beat its earlier weekly
          average by threshold_pct (and at least min_count events)
      Nothing new -> the run is recorded as "quiet" and no model is called.
@@ -19,9 +23,10 @@ Each run has two parts, deliberately separated:
          else marks the alert's citations as invalid
        - if the API fails, a plain-text summary is used instead
 
-Storage is two small files, so the database stays strictly read-only:
-  data/watches.json   the watch definitions and their last-checked point
-  data/alerts.jsonl   one line per run (also the audit trail for the agent)
+Storage is small files, so the database stays strictly read-only:
+  data/watches.json          the watch definitions and their last-checked point
+  data/watch_seen/<id>.json  event ids each watch has already reported
+  data/alerts.jsonl          one line per run (also the audit trail for the agent)
 
 Run:
   python -m src.watch add "16th & Mission" --sources police --categories "Drug Offense"
@@ -55,6 +60,7 @@ from src.prompts import AGENT_SUMMARY_PROMPT
 
 WATCHES_FILE = Path("data/watches.json")
 ALERTS_FILE = Path("data/alerts.jsonl")
+SEEN_DIR = Path("data/watch_seen")
 SOURCES = ["police", "fire_ems", "311"]
 SCHEDULES = {"hourly": dt.timedelta(hours=1), "daily": dt.timedelta(days=1), "weekly": dt.timedelta(days=7)}
 FIRST_LOOKBACK_DAYS = 7      # a new watch's first run reports the last week of data
@@ -79,6 +85,30 @@ def save_watches(watches: list[dict]) -> None:
     tmp = WATCHES_FILE.with_suffix(".tmp")
     tmp.write_text(json.dumps(watches, indent=2, default=str), encoding="utf-8")
     tmp.replace(WATCHES_FILE)  # atomic: a crash never leaves a half-written file
+
+
+def _seen_file(watch_id: str) -> Path:
+    return SEEN_DIR / f"{watch_id}.json"
+
+
+def load_seen(watch_id: str) -> set[str]:
+    try:
+        return set(json.loads(_seen_file(watch_id).read_text(encoding="utf-8")))
+    except FileNotFoundError:
+        return set()
+
+
+def save_seen(watch_id: str, event_ids: set[str]) -> None:
+    SEEN_DIR.mkdir(parents=True, exist_ok=True)
+    tmp = _seen_file(watch_id).with_suffix(".tmp")
+    tmp.write_text(json.dumps(sorted(event_ids)), encoding="utf-8")
+    tmp.replace(_seen_file(watch_id))
+
+
+def baseline(w: dict) -> dt.datetime:
+    """Events after this point are owed to the watch. Watches created before the
+    seen-list existed use their checkpoint at the time of the upgrade."""
+    return dt.datetime.fromisoformat(w.get("baseline_data_at") or w["last_checked_data_at"])
 
 
 def load_alerts(watch_id: str | None = None, limit: int = 50) -> list[dict]:
@@ -128,6 +158,8 @@ def add_watch(con, place: str, radius_m: float = 100, sources: list[str] | None 
     with _lock:
         watches = load_watches()
         n = max([int(w["id"][1:]) for w in watches] + [0]) + 1
+        # First run looks back one week of *data* time
+        start = (data_through(con) - dt.timedelta(days=FIRST_LOOKBACK_DAYS)).isoformat()
         watch = {
             "id": f"w{n}",
             "name": name or describe(d),
@@ -135,13 +167,14 @@ def add_watch(con, place: str, radius_m: float = 100, sources: list[str] | None 
             "threshold_pct": threshold_pct,
             "min_count": min_count,
             "created_at": dt.datetime.now().isoformat(timespec="seconds"),
-            # First run looks back one week of *data* time
-            "last_checked_data_at": (data_through(con) - dt.timedelta(days=FIRST_LOOKBACK_DAYS)).isoformat(),
+            "baseline_data_at": start,       # events after this are owed to the watch
+            "last_checked_data_at": start,   # newest data the last run saw (shown as CHECKED TO)
             "last_run_at": None,
             "enabled": True,
         }
         watches.append(watch)
         save_watches(watches)
+        save_seen(watch["id"], set())  # ids are reused after a delete: start with a clean list
     return watch
 
 
@@ -150,6 +183,7 @@ def remove_watch(watch_id: str) -> bool:
         watches = load_watches()
         kept = [w for w in watches if w["id"] != watch_id]
         save_watches(kept)
+        _seen_file(watch_id).unlink(missing_ok=True)
     return len(kept) < len(watches)
 
 
@@ -173,23 +207,30 @@ def _filters(w: dict) -> tuple[str, list]:
     return sql, params
 
 
-def detect(con, w: dict, since: dt.datetime, as_of: dt.datetime) -> dict:
+def detect(con, w: dict, since: dt.datetime, as_of: dt.datetime,
+           exclude: set[str] = frozenset(), late_before: dt.datetime | None = None) -> dict:
+    """Events matching the watch with since < occurred_at <= as_of, minus `exclude`
+    (ids already reported). `late_before` marks events that occurred before the
+    previous check, i.e. were published late."""
     area = dossier.area_location_ids(con, w["location_id"], w["radius_m"])
     where, params = _filters(w)
     params[0] = area
 
-    def rows(sql, extra):
-        cur = con.execute(sql, params + extra)
+    def rows(sql, args):
+        cur = con.execute(sql, args)
         cols = [d[0] for d in cur.description]
         return [dict(zip(cols, r)) for r in cur.fetchall()]
 
+    # Placeholder order follows the SQL text: SELECT list, then WHERE.
     new_events = rows(f"""
         SELECT event_id, strftime(occurred_at, '%Y-%m-%d %H:%M') AS occurred_at, source,
                category, subcategory, status,
-               (SELECT label FROM location l WHERE l.location_id = event.location_id) AS place
+               (SELECT label FROM location l WHERE l.location_id = event.location_id) AS place,
+               coalesce(occurred_at <= ?::TIMESTAMP, false) AS reported_late
         FROM event
         WHERE {where} AND occurred_at > ? AND occurred_at <= ?
-        ORDER BY occurred_at DESC""", [since, as_of])
+          AND event_id NOT IN (SELECT unnest(?::VARCHAR[]))
+        ORDER BY occurred_at DESC""", [late_before] + params + [since, as_of, sorted(exclude)])
 
     # Filter params bind first (inner query), then as_of; keeps placeholder order simple.
     trend = rows(f"""
@@ -198,7 +239,7 @@ def detect(con, w: dict, since: dt.datetime, as_of: dt.datetime) -> dict:
                round(count(*) FILTER (e.occurred_at <= t.a - INTERVAL 7 DAY) / 4.0, 1)   AS prior_weekly_avg
         FROM (SELECT * FROM event WHERE {where}) e, (SELECT ?::TIMESTAMP AS a) t
         WHERE e.occurred_at > t.a - INTERVAL 35 DAY AND e.occurred_at <= t.a
-        GROUP BY 1, 2""", [as_of])
+        GROUP BY 1, 2""", params + [as_of])
 
     jumps = []
     for t in trend:
@@ -221,6 +262,7 @@ def detect(con, w: dict, since: dt.datetime, as_of: dt.datetime) -> dict:
         return dict(sorted(out.items(), key=lambda kv: -kv[1]))
 
     return {"area_intersections": len(area), "new_count": len(new_events),
+            "late_count": sum(1 for e in new_events if e["reported_late"]),
             "new_by_category": tally(lambda e: f"{e['source']} · {e['category'] or 'Unclassified'}"),
             "new_by_place": tally(lambda e: e["place"] or "unknown"),
             "new_by_day": dict(sorted(tally(lambda e: e["occurred_at"][:10]).items())),
@@ -231,6 +273,8 @@ def detect(con, w: dict, since: dt.datetime, as_of: dt.datetime) -> dict:
 # ---------------------------------------------------------------- summarize
 def plain_summary(w: dict, found: dict) -> str:
     parts = [f"{found['new_count']} new event(s) within {w['radius_m']:.0f} m of {w['label']}."]
+    if found.get("late_count"):
+        parts.append(f"{found['late_count']} of them occurred before the previous check but were published since.")
     if found["new_by_category"]:
         parts.append("By type: " + "; ".join(f"{k} {v}" for k, v in list(found["new_by_category"].items())[:6]) + ".")
     for j in found["jumps"][:3]:
@@ -248,6 +292,7 @@ def summarize(w: dict, found: dict, since: dt.datetime, as_of: dt.datetime) -> d
         "watch": {k: w[k] for k in ("name", "label", "radius_m", "sources", "categories")},
         "period": {"from": str(since), "to": str(as_of)},
         "new_event_count": found["new_count"],
+        "reported_late_count": found.get("late_count", 0),
         "new_by_category": found["new_by_category"],
         "new_by_place": found["new_by_place"],
         "new_by_day": found["new_by_day"],
@@ -290,12 +335,16 @@ def run_watch(con, w: dict, as_of: dt.datetime | None = None, since: dt.datetime
     started = time.time()
     as_of = as_of or data_through(con)
     since = since or dt.datetime.fromisoformat(w["last_checked_data_at"])
-    found = detect(con, w, since, as_of)
+    if replay:  # a past week as if it were new: no memory of what was reported
+        found = detect(con, w, since, as_of)
+    else:       # everything owed since creation that this watch has not reported yet
+        found = detect(con, w, baseline(w), as_of, exclude=load_seen(w["id"]), late_before=since)
 
     alert = {"id": f"{w['id']}-{int(time.time() * 1000)}", "watch_id": w["id"], "watch_name": w["name"],
              "label": w["label"], "run_at": dt.datetime.now().isoformat(timespec="seconds"),
              "period_from": str(since), "period_to": str(as_of), "replay": replay,
-             "new_count": found["new_count"], "new_by_category": found["new_by_category"],
+             "new_count": found["new_count"], "late_count": found["late_count"],
+             "new_by_category": found["new_by_category"],
              "new_by_place": found["new_by_place"], "new_by_day": found["new_by_day"],
              "jumps": found["jumps"], "new_events": found["new_events"][:MAX_EVENTS_TO_MODEL],
              "status": "quiet", "summary": None, "summary_by": None,
@@ -327,7 +376,22 @@ def run_watch(con, w: dict, as_of: dt.datetime | None = None, since: dt.datetime
                     x["last_checked_data_at"] = as_of.isoformat()
                     x["last_run_at"] = alert["run_at"]
             save_watches(watches)
+            if any(x["id"] == w["id"] for x in watches):  # deleted meanwhile: don't recreate its list
+                # Only ids that just went out in an alert are added, so nothing is marked
+                # reported without being reported. Re-read under the lock to keep other runs' ids.
+                seen = load_seen(w["id"]) | {e["event_id"] for e in found["new_events"]}
+                save_seen(w["id"], prune_seen(con, seen))
     return alert
+
+
+def prune_seen(con, seen: set[str]) -> set[str]:
+    """Drop ids no longer in the database (aged out of the 90-day window): they can
+    never be detected again, so remembering them only grows the file."""
+    if not seen:
+        return seen
+    rows = con.execute("SELECT event_id FROM event WHERE event_id IN (SELECT unnest(?::VARCHAR[]))",
+                       [sorted(seen)]).fetchall()
+    return {r[0] for r in rows}
 
 
 def is_due(w: dict, now: dt.datetime) -> bool:
