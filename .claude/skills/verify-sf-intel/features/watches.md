@@ -42,4 +42,6 @@ Preconditions:
 - The first `Delete` click only arms the button (`Confirm delete`). A single click deletes nothing.
 - The form's `Place` field is `required`; submitting it empty is blocked by the browser, so no request is sent.
 - `CHECKED TO` uses data time (the newest event's `occurred_at`), not wall-clock time.
-- Watch IDs are `max(existing)+1`, so after deletes a new watch may not be `w1`. Read the ID from `#wFormMsg`.
+- Watch IDs are `max(existing)+1`, so after deletes a new watch may not be `w1`. Read the ID from `#wFormMsg`. Each watch also has a `uid`; a run saves only into the watch with the uid it started with.
+- Besides `watches.json`, a watch keeps `data/watch_seen/<id>.json` (event ids already reported; empty at creation, deleted with the watch) and uses `data/locks/`. Check them in the run's scratch folder (`%TEMP%\sf-intel-verify\<run>\data\`) as the second view for **Run now** and **Delete**.
+- A second **Run now** on the same watch while one is running waits for it (up to 10 minutes) and then reports only what the first did not: usually `QUIET`.

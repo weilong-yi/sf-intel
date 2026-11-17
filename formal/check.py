@@ -25,8 +25,8 @@ from pathlib import Path
 HERE = Path(__file__).resolve().parent
 OUT = HERE / ".out"
 SPEC = "WatchCheckpoint"
-PROPERTIES = ["NoLostWatch", "NoResurrectedWatch", "NoMissedEvent", "NoDuplicateAlert"]
-SCENARIOS = ["code", "server_only", "fixed", "old_checkpoint"]
+PROPERTIES = ["NoLostWatch", "NoResurrectedWatch", "NoMissedEvent", "NoDuplicateAlert", "NoStuckThread"]
+SCENARIOS = ["code", "process_lock", "old_checkpoint"]
 
 
 def find_java() -> str:
@@ -74,43 +74,49 @@ def run(java: str, jar: str, scenario: str, prop: str) -> tuple[str, str, float]
 REPO = HERE.parent
 SYNC_FILE = HERE / "SYNC"   # commit at which the model was last confirmed to describe the code
 COVERED = ["src/watch.py", "src/server.py", "src/ingest.py", "src/build.py", "src/sources.py"]
-LOCK_PATHS = {"add_watch": "add", "remove_watch": "remove", "run_watch": "run_save"}
+LOCK_PATHS = {"add_watch": "add", "remove_watch": "remove", "_run_once": "run_save"}
 
 
-def code_lock_paths() -> set[str]:
-    """Which watch.py functions take `with _lock:` - the model's `Locked` constant must match."""
+def code_design() -> dict:
+    """Read the design choices the model's code.cfg must match straight from src/watch.py."""
     import ast
-    tree = ast.parse((REPO / "src" / "watch.py").read_text(encoding="utf-8"))
-    found = set()
-    for fn in ast.walk(tree):
-        if isinstance(fn, ast.FunctionDef) and fn.name in LOCK_PATHS:
-            for node in ast.walk(fn):
-                if isinstance(node, ast.With) and any(
-                        isinstance(i.context_expr, ast.Name) and i.context_expr.id == "_lock" for i in node.items):
-                    found.add(LOCK_PATHS[fn.name])
-    return found
+    src = (REPO / "src" / "watch.py").read_text(encoding="utf-8")
+    tree = ast.parse(src)
+    funcs = {f.name: f for f in ast.walk(tree) if isinstance(f, ast.FunctionDef)}
+
+    def lock_calls(fn_name: str) -> list[str]:
+        """Source of every `with X:` context expression in a function."""
+        fn = funcs.get(fn_name)
+        return [ast.unparse(i.context_expr) for n in ast.walk(fn) if isinstance(n, ast.With) for i in n.items] if fn else []
+
+    store_is_file_lock = "_store" in funcs and "_file_lock" in ast.unparse(funcs["_store"])
+    locked = {path for fn, path in LOCK_PATHS.items()
+              if any(c in ("_store()", "_lock") for c in lock_calls(fn))}
+    return {
+        "Locked": locked,
+        "LockScope": "machine" if store_is_file_lock else "process",
+        "RunLock": any(c.startswith("_file_lock(f'run-") for c in lock_calls("run_watch")),
+        "MatchUid": "same_watch(" in ast.unparse(funcs["_run_once"]) if "_run_once" in funcs else False,
+        "Checkpoint": "seen_ids" if re.search(r"exclude\s*=\s*(seen|load_seen\()", src) else "occurred_at",
+    }
+
+
+def cfg_design(scenario: str) -> dict:
+    text = (HERE / f"{scenario}.cfg").read_text()
+    get = lambda k: (re.search(rf"{k}\s*=\s*(.+)", text) or [None, ""])[1].strip()
+    return {"Locked": set(re.findall(r'"(\w+)"', get("Locked"))), "LockScope": get("LockScope").strip('"'),
+            "RunLock": get("RunLock") == "TRUE", "MatchUid": get("MatchUid") == "TRUE",
+            "Checkpoint": get("Checkpoint").strip('"')}
 
 
 def drift_report() -> bool:
     """Print what changed since the sync commit. Returns False if the model is provably out of sync."""
+    code, model = code_design(), cfg_design("code")
     ok = True
-    code = code_lock_paths()
-    for scenario in ("code", "server_only"):
-        m = re.search(r"Locked\s*=\s*\{([^}]*)\}", (HERE / f"{scenario}.cfg").read_text())
-        model = set(re.findall(r'"(\w+)"', m.group(1))) if m else set()
-        if model != code:
-            print(f"MODEL OUT OF SYNC: src/watch.py takes _lock in {sorted(code)}, "
-                  f"{scenario}.cfg says Locked = {sorted(model)}. Update the cfg (and the model if the "
-                  f"code path itself changed), then rerun.")
-            ok = False
-    # Checkpoint style: the code owes "seen_ids" when run_watch excludes load_seen(...) results.
-    src = (REPO / "src" / "watch.py").read_text(encoding="utf-8")
-    code_ckpt = "seen_ids" if re.search(r"exclude\s*=\s*load_seen\(", src) else "occurred_at"
-    for scenario in ("code", "server_only"):
-        m = re.search(r'Checkpoint\s*=\s*"(\w+)"', (HERE / f"{scenario}.cfg").read_text())
-        if not m or m.group(1) != code_ckpt:
-            print(f"MODEL OUT OF SYNC: src/watch.py checkpoints by {code_ckpt}, "
-                  f"{scenario}.cfg says Checkpoint = {m.group(1) if m else 'missing'}.")
+    for key in code:
+        if code[key] != model[key]:
+            print(f"MODEL OUT OF SYNC: src/watch.py has {key} = {code[key]}, formal/code.cfg says {model[key]}. "
+                  f"Update the cfg (and the model if the code path itself changed), then rerun.")
             ok = False
     sync = SYNC_FILE.read_text().strip()
     r = subprocess.run(["git", "-C", str(REPO), "diff", "--stat", sync, "--", *COVERED], capture_output=True, text=True)
@@ -132,7 +138,8 @@ def main():
     if len(sys.argv) == 3:
         jobs = [(sys.argv[1], sys.argv[2])]
     else:
-        jobs = [(s, p) for s in SCENARIOS for p in PROPERTIES]
+        # Only what expected.json lists: the old designs skip NoStuckThread (they only need to fail).
+        jobs = [(s, p) for s in SCENARIOS for p in PROPERTIES if p in expected.get(s, {})]
     print(f"{'scenario':<12} {'property':<20} {'result':<10} {'expected':<10} detail")
     changed = 0
     for scenario, prop in jobs:

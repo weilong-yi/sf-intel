@@ -26,6 +26,7 @@ import base64
 import datetime as dt
 import json
 import os
+import re
 import shutil
 import socket
 import struct
@@ -359,9 +360,23 @@ def cmd_state(args):
         (artifacts(inst["run"]) / f"{args.save}.json").write_text(text, encoding="utf-8")
 
 
+def route(target: str) -> str:
+    """'/api/x', 'api/x', '?view=sql' -> '/api/x', '/?view=sql'. Git Bash rewrites an argument that
+    starts with '/' into a Windows path ('C:/Program Files/Git/api/x'); recover the route from it."""
+    t = target or ""
+    if re.match(r"^[A-Za-z]:[\\/]", t) or "Program Files" in t:
+        t = t.replace("\\", "/")
+        hit = re.search(r"/(api/.*)$", t)
+        if not hit:
+            die(f"{target!r} looks like a path Git Bash rewrote; pass it without a leading slash, e.g. 'api/watches'")
+        t = hit.group(1)
+    return "/" + t.lstrip("/")
+
+
 def cmd_api(args):
     inst = load_instance(args.run)
     body = json.loads(args.json) if args.json else ({} if args.method == "POST" else None)
+    args.path = route(args.path)
     status, _, text = http(args.method, inst["url"] + args.path, body)
     print(f"HTTP {status}")
     print(text[:20000])
@@ -377,9 +392,7 @@ def cmd_browser(args):
     a, result = args.action, None
     if a == "open":
         t = args.target or ""
-        if len(t) > 2 and t[1] == ":" and t[2] in "\\/":
-            die(f"{t!r} looks like a path Git Bash rewrote; pass the target without a leading slash, e.g. '?view=places'")
-        url = t if t.startswith("http") else inst["url"] + "/" + t.lstrip("/")
+        url = t if t.startswith("http") else inst["url"] + route(t)
         cdp.call("Page.navigate", url=url)
         deadline = time.time() + 30
         time.sleep(0.3)

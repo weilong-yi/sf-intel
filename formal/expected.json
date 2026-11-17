@@ -1,6 +1,5 @@
 {
-  "code":           {"NoLostWatch": "VIOLATED", "NoResurrectedWatch": "VIOLATED", "NoMissedEvent": "PASS",     "NoDuplicateAlert": "VIOLATED"},
-  "server_only":    {"NoLostWatch": "PASS",     "NoResurrectedWatch": "PASS",     "NoMissedEvent": "PASS",     "NoDuplicateAlert": "VIOLATED"},
-  "fixed":          {"NoLostWatch": "PASS",     "NoResurrectedWatch": "PASS",     "NoMissedEvent": "PASS",     "NoDuplicateAlert": "PASS"},
+  "code": {"NoLostWatch": "PASS", "NoResurrectedWatch": "PASS", "NoMissedEvent": "PASS", "NoDuplicateAlert": "PASS", "NoStuckThread": "PASS"},
+  "process_lock": {"NoLostWatch": "VIOLATED", "NoResurrectedWatch": "VIOLATED", "NoMissedEvent": "VIOLATED", "NoDuplicateAlert": "VIOLATED"},
   "old_checkpoint": {"NoLostWatch": "VIOLATED", "NoResurrectedWatch": "VIOLATED", "NoMissedEvent": "VIOLATED", "NoDuplicateAlert": "VIOLATED"}
 }

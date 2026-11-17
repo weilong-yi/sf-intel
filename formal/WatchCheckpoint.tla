@@ -18,11 +18,19 @@
 (*   seenFile      data/watch_seen/<id>.json (load_seen / save_seen)       *)
 (*   db            the event table in data/sf_intel.duckdb                 *)
 (*   DataThrough   data_through(con) = max(occurred_at) FROM event         *)
-(*   lock          watch._lock, a threading.Lock: one per PROCESS          *)
+(*   lock          the store lock. LockScope "machine": _store(), a file    *)
+(*                 lock on data/locks/store.lock shared by all processes   *)
+(*                 (the code); "process": the old threading.Lock, one per  *)
+(*                 process (commits b8672d7, d5615a5)                      *)
+(*   runLock       _file_lock("run-<id>"), held by a run from reading its  *)
+(*                 state to saving it (RunLock = TRUE; the code)           *)
+(*   inc           a watch's uid: tells apart two watches that got the     *)
+(*                 same id (ids are reused after a delete). MatchUid: the  *)
+(*                 code saves only into the same uid (same_watch)          *)
 (*   ServerThreads request threads of `python -m src.server`               *)
-(*                 (ThreadingHTTPServer), sharing one _lock                *)
+(*                 (ThreadingHTTPServer)                                   *)
 (*   CliThreads    `python -m src.watch run` (e.g. the Task Scheduler      *)
-(*                 job in watch.py's docstring), its own _lock             *)
+(*                 job in watch.py's docstring), a second process          *)
 (*   Checkpoint    "seen_ids": detect owes every event after base that is  *)
 (*                 not in seenFile (the code since the late-report fix);   *)
 (*                 "occurred_at": detect takes occurred_at > ckpt (the     *)
@@ -35,6 +43,8 @@
 (*     FIRST_LOOKBACK_DAYS; that only adds events to the first alert)      *)
 (*   - replay runs are left out: they never write watches.json or seen     *)
 (*   - the LLM summary is left out: it never changes what is reported      *)
+(*   - file-system effects are left out: corrupt or unreadable files from  *)
+(*     unlocked writes are covered by experiments/05_concurrent_...py      *)
 (*   - prune_seen is left out: events never leave db in this model         *)
 (***************************************************************************)
 EXTENDS Naturals, FiniteSets
@@ -47,8 +57,9 @@ CONSTANTS
     MaxOps,          \* operations each thread may start (bounds the run)
     MaxRebuilds,     \* data refreshes (ingest + build)
     Locked,          \* which code paths take watch._lock: subset of {"add", "remove", "run_save"}
-    LockScope,       \* "process": threading.Lock (the code); "machine": a cross-process file lock
-    RunHoldsLock,    \* TRUE: run_watch reads its state under the lock and holds it to the save
+    LockScope,       \* "machine": a cross-process file lock (the code); "process": threading.Lock
+    RunLock,         \* TRUE: a per-watch run lock, state re-read under it (the code)
+    MatchUid,        \* TRUE: a run saves only into the watch with the uid it read (the code)
     LateArrivals,    \* TRUE: a rebuild can add events older than DataThrough (police report late)
     Checkpoint       \* "seen_ids" (current code) or "occurred_at" (before the fix)
 
@@ -58,9 +69,11 @@ WIds    == 1..NumWatches
 
 VARIABLES
     db,         \* events in the built database
-    file,       \* watches.json: watch id -> [base, ckpt]
+    file,       \* watches.json: watch id -> [base, ckpt, inc]
     seenFile,   \* watch_seen/<id>.json: watch id -> event ids already reported ({} when no file)
     lock,       \* lock name -> holding thread, or "free"
+    runLock,    \* watch id -> thread holding its run lock, or "free"
+    nextInc,    \* uid generator: every add_watch gets a fresh one
     pc,         \* thread -> program counter
     local,      \* thread -> its in-memory copy of watches.json
     localSeen,  \* thread -> its in-memory copy of one seen list (read under the lock)
@@ -68,6 +81,7 @@ VARIABLES
     since,      \* thread -> last_checked_data_at it read (run_watch's `since`)
     snapBase,   \* thread -> baseline_data_at it read
     snapSeen,   \* thread -> seen list it read at the start of the run
+    snapInc,    \* thread -> uid of the watch it is running
     asOf,       \* thread -> data_through it read (run_watch's `as_of`)
     found,      \* thread -> events its detect() returned
     ops,        \* thread -> operations started
@@ -75,14 +89,15 @@ VARIABLES
     \* ghost state: what the user has been told, used only by the properties
     live,       \* ids whose add_watch returned and whose remove_watch has not
     created,    \* id -> base at creation (events after it are owed to the user)
+    incOf,      \* id -> uid of the watch the user currently has under that id
     reported,   \* id -> events reported in regular alerts since that creation
     missed,     \* TRUE once a run skipped an owed, never-reported event
     dup         \* TRUE once a regular alert repeated an event already reported
 
-vars == <<db, file, seenFile, lock, pc, local, localSeen, target, since, snapBase, snapSeen,
-          asOf, found, ops, rebuilds, live, created, reported, missed, dup>>
-threadVars == <<local, localSeen, target, since, snapBase, snapSeen, asOf, found>>
-ghostVars  == <<live, created, reported, missed, dup>>
+vars == <<db, file, seenFile, lock, runLock, nextInc, pc, local, localSeen, target, since, snapBase,
+          snapSeen, snapInc, asOf, found, ops, rebuilds, live, created, incOf, reported, missed, dup>>
+threadVars == <<local, localSeen, target, since, snapBase, snapSeen, snapInc, asOf, found>>
+ghostVars  == <<live, created, incOf, reported, missed, dup>>
 
 Max(S) == CHOOSE x \in S : \A y \in S : x >= y
 DataThrough == IF db = {} THEN 0 ELSE Max(db)
@@ -103,22 +118,26 @@ Release(t, path) == IF path \in Locked THEN [lock EXCEPT ![LockOf(t)] = "free"] 
 
 Init ==
     /\ db = {}
-    /\ file = [x \in {} |-> [base |-> 0, ckpt |-> 0]]
+    /\ file = [x \in {} |-> [base |-> 0, ckpt |-> 0, inc |-> 0]]
     /\ seenFile = [w \in WIds |-> {}]
     /\ lock = [l \in LockNames |-> "free"]
+    /\ runLock = [w \in WIds |-> "free"]
+    /\ nextInc = 1
     /\ pc = [t \in Threads |-> "idle"]
-    /\ local = [t \in Threads |-> [x \in {} |-> [base |-> 0, ckpt |-> 0]]]
+    /\ local = [t \in Threads |-> [x \in {} |-> [base |-> 0, ckpt |-> 0, inc |-> 0]]]
     /\ localSeen = [t \in Threads |-> {}]
     /\ target = [t \in Threads |-> 0]
     /\ since = [t \in Threads |-> 0]
     /\ snapBase = [t \in Threads |-> 0]
     /\ snapSeen = [t \in Threads |-> {}]
+    /\ snapInc = [t \in Threads |-> 0]
     /\ asOf = [t \in Threads |-> 0]
     /\ found = [t \in Threads |-> {}]
     /\ ops = [t \in Threads |-> 0]
     /\ rebuilds = 0
     /\ live = {}
     /\ created = [w \in WIds |-> 0]
+    /\ incOf = [w \in WIds |-> 0]
     /\ reported = [w \in WIds |-> {}]
     /\ missed = FALSE
     /\ dup = FALSE
@@ -134,25 +153,27 @@ AddLoad(t) ==
     /\ lock' = Take(t, "add")
     /\ local' = [local EXCEPT ![t] = file]
     /\ pc' = [pc EXCEPT ![t] = "add_save"]
-    /\ UNCHANGED <<db, file, seenFile, localSeen, target, since, snapBase, snapSeen, asOf, found, rebuilds, ghostVars>>
+    /\ UNCHANGED <<db, file, seenFile, runLock, nextInc, localSeen, target, since, snapBase, snapSeen, snapInc, asOf, found, rebuilds, ghostVars>>
 
 AddSave(t) ==
     LET id == NextId(local[t]) IN
     /\ pc[t] = "add_save" /\ id <= NumWatches
-    /\ file' = Put(local[t], id, [base |-> DataThrough, ckpt |-> DataThrough])
+    /\ file' = Put(local[t], id, [base |-> DataThrough, ckpt |-> DataThrough, inc |-> nextInc])
     /\ seenFile' = [seenFile EXCEPT ![id] = {}]
     /\ lock' = Release(t, "add")
     /\ pc' = [pc EXCEPT ![t] = "idle"]
     /\ live' = live \cup {id}                          \* add_watch returned the watch to the user
     /\ created' = [created EXCEPT ![id] = DataThrough]
+    /\ incOf' = [incOf EXCEPT ![id] = nextInc]
+    /\ nextInc' = nextInc + 1                          \* uuid.uuid4()
     /\ reported' = [reported EXCEPT ![id] = {}]        \* a new watch, even if the id was used before
-    /\ UNCHANGED <<db, threadVars, ops, rebuilds, missed, dup>>
+    /\ UNCHANGED <<db, runLock, threadVars, ops, rebuilds, missed, dup>>
 
 AddFull(t) ==   \* all ids used: add_watch still returns, nothing to model
     /\ pc[t] = "add_save" /\ NextId(local[t]) > NumWatches
     /\ lock' = Release(t, "add")
     /\ pc' = [pc EXCEPT ![t] = "idle"]
-    /\ UNCHANGED <<db, file, seenFile, threadVars, ops, rebuilds, ghostVars>>
+    /\ UNCHANGED <<db, file, seenFile, runLock, nextInc, threadVars, ops, rebuilds, ghostVars>>
 
 (* ---- remove_watch: `with _lock: watches = load_watches(); kept = [...]; *)
 (*      save_watches(kept); _seen_file(id).unlink()`. Saves even when the *)
@@ -164,7 +185,7 @@ RemoveLoad(t, w) ==
     /\ local' = [local EXCEPT ![t] = file]
     /\ target' = [target EXCEPT ![t] = w]
     /\ pc' = [pc EXCEPT ![t] = "rm_save"]
-    /\ UNCHANGED <<db, file, seenFile, localSeen, since, snapBase, snapSeen, asOf, found, rebuilds, ghostVars>>
+    /\ UNCHANGED <<db, file, seenFile, runLock, nextInc, localSeen, since, snapBase, snapSeen, snapInc, asOf, found, rebuilds, ghostVars>>
 
 RemoveSave(t) ==
     /\ pc[t] = "rm_save"
@@ -173,37 +194,44 @@ RemoveSave(t) ==
     /\ lock' = Release(t, "remove")
     /\ pc' = [pc EXCEPT ![t] = "idle"]
     /\ live' = live \ {target[t]}                      \* remove_watch returned True to the user
-    /\ UNCHANGED <<db, threadVars, ops, rebuilds, created, reported, missed, dup>>
+    /\ UNCHANGED <<db, runLock, nextInc, threadVars, ops, rebuilds, created, incOf, reported, missed, dup>>
 
 (* ---- run_watch, non-replay.                                            *)
-(*   RunSnap:   the watch dict `w` was read earlier, outside any lock:    *)
-(*              server /api/watches/run does load_watches() per request;  *)
-(*              CLI `run` does load_watches() once in main().             *)
-(*              since = last_checked_data_at; baseline(w)                 *)
-(*   RunSeen:   `exclude=load_seen(w["id"])`, outside the lock            *)
+(*  RunLock = TRUE (the code):                                            *)
+(*   RunSnap:   `with _file_lock(f"run-{w['id']}")`, then under _store(): *)
+(*              re-read the watch (same_watch) and `_read_seen(id)`;      *)
+(*              since = last_checked_data_at; baseline(w). One step.      *)
+(*  RunLock = FALSE (before): the dict `w` was read earlier, outside any  *)
+(*              lock (server per request; CLI once in main()), and the    *)
+(*              seen list later by `load_seen` (RunSnap, then RunSeen).   *)
 (*   RunDetect: `as_of = data_through(con)`; detect(...) then             *)
 (*              append_alert(alert) reports `found`.                      *)
 (*              seen_ids:    baseline < occurred_at <= as_of, not seen    *)
 (*              occurred_at: since    < occurred_at <= as_of              *)
-(*   RunLoad/RunSave: `with _lock: watches = load_watches(); ...          *)
-(*              x["last_checked_data_at"] = as_of; save_watches(watches); *)
-(*              if id still present: save_seen(id, load_seen(id) | found)`*)
+(*   RunLoad/RunSave: under the store lock: re-read watches.json; if the  *)
+(*              same watch (same uid when MatchUid, else same id) is      *)
+(*              there: set last_checked_data_at = as_of, write, and       *)
+(*              write seen = re-read seen | found. Then the run lock is   *)
+(*              released.                                                 *)
 RunSnap(t, w) ==
     /\ Begin(t)
     /\ w \in DOMAIN file
-    /\ IF RunHoldsLock THEN CanTake(t, "run_save") ELSE TRUE
-    /\ lock' = IF RunHoldsLock THEN Take(t, "run_save") ELSE lock
+    /\ IF RunLock THEN runLock[w] = "free" /\ CanTake(t, "run_save") ELSE TRUE
+    /\ runLock' = IF RunLock THEN [runLock EXCEPT ![w] = t] ELSE runLock
     /\ target' = [target EXCEPT ![t] = w]
     /\ since' = [since EXCEPT ![t] = file[w].ckpt]
     /\ snapBase' = [snapBase EXCEPT ![t] = file[w].base]
-    /\ pc' = [pc EXCEPT ![t] = "run_seen"]
-    /\ UNCHANGED <<db, file, seenFile, local, localSeen, snapSeen, asOf, found, rebuilds, ghostVars>>
+    /\ snapInc' = [snapInc EXCEPT ![t] = file[w].inc]
+    /\ snapSeen' = IF RunLock THEN [snapSeen EXCEPT ![t] = seenFile[w]] ELSE snapSeen
+    /\ pc' = [pc EXCEPT ![t] = IF RunLock THEN "run_detect" ELSE "run_seen"]
+    /\ UNCHANGED <<db, file, seenFile, lock, nextInc, local, localSeen, asOf, found, rebuilds, ghostVars>>
 
 RunSeen(t) ==
     /\ pc[t] = "run_seen"
     /\ snapSeen' = [snapSeen EXCEPT ![t] = seenFile[target[t]]]
     /\ pc' = [pc EXCEPT ![t] = "run_detect"]
-    /\ UNCHANGED <<db, file, seenFile, lock, local, localSeen, target, since, snapBase, asOf, found, ops, rebuilds, ghostVars>>
+    /\ UNCHANGED <<db, file, seenFile, lock, runLock, nextInc, local, localSeen, target, since, snapBase,
+                   snapInc, asOf, found, ops, rebuilds, ghostVars>>
 
 RunDetect(t) ==
     LET w == target[t]
@@ -211,34 +239,42 @@ RunDetect(t) ==
              THEN {e \in db : snapBase[t] < e /\ e <= DataThrough /\ e \notin snapSeen[t]}
              ELSE {e \in db : since[t] < e /\ e <= DataThrough}
         owed == {e \in db : created[w] < e /\ e <= DataThrough}
+        current == w \in live /\ snapInc[t] = incOf[w]   \* this run is of the watch the user has now
     IN
     /\ pc[t] = "run_detect"
     /\ asOf' = [asOf EXCEPT ![t] = DataThrough]
     /\ found' = [found EXCEPT ![t] = f]
-    /\ missed' = (missed \/ (w \in live /\ \E e \in owed : e \notin f /\ e \notin reported[w]))
-    /\ dup' = (dup \/ (f \cap reported[w] # {}))
-    /\ reported' = [reported EXCEPT ![w] = @ \cup f]
+    /\ missed' = (missed \/ (current /\ \E e \in owed : e \notin f /\ e \notin reported[w]))
+    /\ dup' = (dup \/ (current /\ f \cap reported[w] # {}))
+    /\ reported' = IF current THEN [reported EXCEPT ![w] = @ \cup f] ELSE reported
     /\ pc' = [pc EXCEPT ![t] = "run_load"]
-    /\ UNCHANGED <<db, file, seenFile, lock, local, localSeen, target, since, snapBase, snapSeen, ops, rebuilds, live, created>>
+    /\ UNCHANGED <<db, file, seenFile, lock, runLock, nextInc, local, localSeen, target, since, snapBase,
+                   snapSeen, snapInc, ops, rebuilds, live, created, incOf>>
 
 RunLoad(t) ==
     /\ pc[t] = "run_load"
-    /\ IF RunHoldsLock THEN TRUE ELSE CanTake(t, "run_save")
-    /\ lock' = IF RunHoldsLock THEN lock ELSE Take(t, "run_save")
+    /\ CanTake(t, "run_save")
+    /\ lock' = Take(t, "run_save")
     /\ local' = [local EXCEPT ![t] = file]
     /\ localSeen' = [localSeen EXCEPT ![t] = seenFile[target[t]]]
     /\ pc' = [pc EXCEPT ![t] = "run_save"]
-    /\ UNCHANGED <<db, file, seenFile, target, since, snapBase, snapSeen, asOf, found, ops, rebuilds, ghostVars>>
+    /\ UNCHANGED <<db, file, seenFile, runLock, nextInc, target, since, snapBase, snapSeen, snapInc,
+                   asOf, found, ops, rebuilds, ghostVars>>
 
 RunSave(t) ==
-    LET w == target[t] IN
+    LET w == target[t]
+        mine == w \in DOMAIN local[t] /\ (~MatchUid \/ local[t][w].inc = snapInc[t])
+    IN
     /\ pc[t] = "run_save"
-    /\ file' = IF w \in DOMAIN local[t] THEN [local[t] EXCEPT ![w].ckpt = asOf[t]] ELSE local[t]
-    /\ seenFile' = IF Checkpoint = "seen_ids" /\ w \in DOMAIN local[t]
+    \* MatchUid (the code) writes only when it updated its own watch; before, it always wrote back.
+    /\ file' = IF mine THEN [local[t] EXCEPT ![w].ckpt = asOf[t]]
+               ELSE IF MatchUid THEN file ELSE local[t]
+    /\ seenFile' = IF Checkpoint = "seen_ids" /\ mine
                    THEN [seenFile EXCEPT ![w] = localSeen[t] \cup found[t]] ELSE seenFile
     /\ lock' = Release(t, "run_save")
+    /\ runLock' = IF RunLock THEN [runLock EXCEPT ![w] = "free"] ELSE runLock
     /\ pc' = [pc EXCEPT ![t] = "idle"]
-    /\ UNCHANGED <<db, threadVars, ops, rebuilds, ghostVars>>
+    /\ UNCHANGED <<db, nextInc, threadVars, ops, rebuilds, ghostVars>>
 
 (* ---- data refresh: `python -m src.ingest` re-downloads the whole       *)
 (*      90-day window by its time column, then `python -m src.build`      *)
@@ -252,14 +288,15 @@ Rebuild ==
         /\ LateArrivals \/ \A e \in new : e > DataThrough
         /\ db' = db \cup new
     /\ rebuilds' = rebuilds + 1
-    /\ UNCHANGED <<file, seenFile, lock, pc, threadVars, ops, ghostVars>>
+    /\ UNCHANGED <<file, seenFile, lock, runLock, nextInc, pc, threadVars, ops, ghostVars>>
 
-Next ==
-    \/ Rebuild
-    \/ \E t \in Threads :
+ThreadStep ==
+    \E t \in Threads :
         \/ AddLoad(t) \/ AddSave(t) \/ AddFull(t)
         \/ RemoveSave(t) \/ RunSeen(t) \/ RunDetect(t) \/ RunLoad(t) \/ RunSave(t)
         \/ \E w \in WIds : RemoveLoad(t, w) \/ RunSnap(t, w)
+
+Next == Rebuild \/ ThreadStep
 
 Spec == Init /\ [][Next]_vars
 
@@ -282,6 +319,11 @@ NoMissedEvent == ~missed
 \* No event is reported twice by regular alerts of the same watch.
 \* Harm: duplicate alerts, inflated "N new" counts, and a doubled model bill.
 NoDuplicateAlert == ~dup
+
+\* While any operation is in progress, some thread can take a step (no lock cycle).
+\* Needed because check.py runs TLC with deadlock checking off (runs are bounded).
+\* Harm: the web server or the scheduled job hangs forever.
+NoStuckThread == (\E t \in Threads : pc[t] # "idle") => ENABLED ThreadStep
 
 TypeOK ==
     /\ db \subseteq Events
