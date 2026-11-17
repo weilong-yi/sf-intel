@@ -39,6 +39,8 @@ DataSF API ──ingest──▶ data/raw/*.csv ──build (SQL in DuckDB)─�
 - **Assistant** ([src/assistant.py](src/assistant.py), [src/prompts.py](src/prompts.py)): Claude with two tools (`location_profile` and read-only `run_sql`) in a hand-written tool-use loop. Answers cite event IDs such as `[police:1614966]`.
 - **Web UI** ([src/server.py](src/server.py), [src/ui/index.html](src/ui/index.html)): Ask, Places and SQL views, plus a panel that shows any event's source records. It uses only the Python standard library and listens only on localhost.
 
+**[docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)** explains every layer, the 33 design decisions with their tradeoffs, known limitations, and the roadmap (monitoring agents, skills, AI-assisted integration).
+
 ### Results on the current data (Aug 17 – Nov 15, 2026)
 
 - 292,404 events at 7,288 intersections; 2,600 intersections appear in all three systems.
@@ -233,7 +235,7 @@ src/
   server.py      local web server and JSON API
   ui/index.html  the web UI (single file, no build step)
 experiments/     one-idea scripts
-docs/            screenshots
+docs/            ARCHITECTURE.md (design decisions and tradeoffs), screenshots
 data/            generated, not committed
 ```
 
