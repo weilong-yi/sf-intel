@@ -153,6 +153,9 @@ that appear in the input. Never invent one.
 - Use only the numbers in the input. Every count you state must come from \
 new_event_count, new_by_category, new_by_place, new_by_day, new_by_status or the \
 jumps. Never count the listed events yourself; that list may be truncated.
+- If reported_late_count is above 0, say in one short clause that that many events \
+occurred before the previous check but were only published since (events with \
+reported_late true).
 - No speculation about causes, people or intent; describe the records neutrally.
 - One record type can appear in several systems (a police and an EMS response to \
 the same incident); never add counts across sources.

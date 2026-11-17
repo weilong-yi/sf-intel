@@ -345,10 +345,13 @@ behind it. `src/watch.py`; the Watches view in the UI.
 ### 10.1 A run, step by step
 
 ```
-watch (place, radius, sources, categories, schedule, checkpoint)
+watch (place, radius, sources, categories, schedule, baseline, seen list)
+   │
+   ▼  0. LOCK: the watch's own run lock; a second run of the same watch waits its turn
    │
    ▼  1. DETECT: plain SQL, no AI, free
-   │     new events in the area since the checkpoint
+   │     every event in the area since the watch's baseline that it has not reported yet
+   │     (late-published records included, and flagged as late)
    │     jumps: source/category whose last 7 days ≥ prior weekly average × 1.5 (and ≥ 5 events)
    │     counts by type, place, day and status, computed in code
    │
@@ -362,7 +365,8 @@ watch (place, radius, sources, categories, schedule, checkpoint)
    │     anything else → alert marked "invalid citations"
    │     API down or model declines → plain-text summary instead (alert still delivered)
    │
-   ▼  4. RECORD: append to data/alerts.jsonl; advance the checkpoint
+   ▼  4. RECORD: append to data/alerts.jsonl; add the reported ids to the seen list;
+         move "checked to" (all under the store lock)
 ```
 
 Status: **ATTENTION** (a jump), **NEW** (new events, no jump), **QUIET** (nothing new).
@@ -394,11 +398,12 @@ in line. Each summary cost about $0.02; quiet runs cost nothing.
 | **D36. Every count is computed in code** | In testing, the model counted events itself ("20 of 23 at Wiese"); models miscount long lists. Counts by type, place, day and status are now in the input, and the prompt forbids counting. | Larger input. | Never. |
 | **D37. Citations checked against the input** | A cited ID that wasn't in the input can't be trusted; the alert says so instead of hiding it. | A check, not a fix: a bad alert is still delivered, clearly marked. | Repeated failures: block delivery and fall back to the plain-text summary. |
 | **D38. The model proposes; a person creates** | Creating a watch is a write and starts recurring work. The assistant validates and proposes; the person confirms. | One extra click. | Trusted, low-risk patterns: allow auto-creation within a policy. |
-| **D39. Watch state in JSON files, not the database** | The database stays strictly read-only; watches and alerts are small and human-readable; writes are atomic (write then rename). | No concurrent writers across machines; no querying alerts with SQL. | Multi-user: a proper table with locking, or a queue. |
+| **D39. Watch state in JSON files, not the database** | The database stays strictly read-only; watches and alerts are small and human-readable; writes are atomic (write then rename). Every read and write goes through one file lock (`data/locks/store.lock`) shared by the web server and the scheduled job: without it, they corrupted `watches.json`, revived deleted watches and crashed on Windows (`experiments/05_concurrent_watch_writes.py`). | One machine only; no querying alerts with SQL. | Multi-user or several machines: a proper table with transactions, or a queue. |
 | **D40. Jump rule: last 7 days vs prior 4-week weekly average, +50%, at least 5 events** | Simple to explain and to check by hand. The minimum of 5 removes noise like "3 vs 1". | Ignores day-of-week and seasonal patterns; drops are not flagged. | Patterns matter: compare with the same weekday or week last year; add drop alerts. |
 | **D41. Alert always delivered** | If the API is down or declines, a plain-text summary from detection is used. Monitoring that silently skips a run is worse than a plainer alert. | Less readable in that case. | Never. |
 | **D42. Replay instead of faking new data** | The dataset is fixed; replay shows real past weeks as if new, labelled as replays, without moving the checkpoint. | Not a substitute for live testing. | Incremental ingest exists: run on live data. |
-| **D43. Checkpoint on when events *occurred*** | Simple; matches how people read "new this week". | **Known gap:** records filed late (a police report entered days after the incident) can land before the checkpoint and never be reported. | Live data: checkpoint on when records were *loaded* (`data_loaded_at`) and report late arrivals separately. |
+| **D43. Remember what was reported, not a timestamp** | Police `occurred_at` is the incident time and ~19% of reports are filed over a day late, so a timestamp checkpoint silently skipped them. Each watch keeps the event ids it has reported (`data/watch_seen/<id>.json`); a run reports everything since its baseline that is not in that list, and flags late ones. Checked by a TLA+ model (`formal/`). | One small file per watch (pruned to events still in the 90-day window). | Several machines: store reported ids in a shared table. |
+| **D44. One run of a watch at a time** | Two runs of one watch (Run now during the scheduled job) used to report the same events twice. A per-watch file lock makes them take turns; the second re-reads the seen list. The lock isn't held by other watches, so a slow model call only delays its own watch. | A second run waits up to 10 minutes, then fails with a clear error. | Never on one machine. |
 
 ## 11. Data quality results
 
@@ -418,7 +423,7 @@ On the window Aug 17 – Nov 15, 2026:
 - **Public data only.** No people, cases, warrants or narratives. A real deployment would add person and case objects under access controls.
 - **No cross-source incident linking** (D16).
 - **Batch only.** No incremental loads. Watches can be scheduled, but on this fixed dataset they find new events only through replay.
-- **Late-filed records can be missed by watches** (D43).
+- **Watch state is local to one machine** (D39): the file locks coordinate processes on one computer, not several.
 - **No evaluation set.** Answers are spot-checked, not scored against known answers.
 - **Single user, local.** No authentication; conversations are lost on restart.
 - **Police locations are approximate by design**, so place-level police counts are area estimates.
@@ -504,4 +509,5 @@ Tradeoff: faster integration, but the review step is mandatory; a wrong mapping 
 | D40 | Jump rule | [10.4](#104-decisions) |
 | D41 | Alert always delivered | [10.4](#104-decisions) |
 | D42 | Replay instead of faking new data | [10.4](#104-decisions) |
-| D43 | Checkpoint on when events occurred | [10.4](#104-decisions) |
+| D43 | Remember what was reported, not a timestamp | [10.4](#104-decisions) |
+| D44 | One run of a watch at a time | [10.4](#104-decisions) |

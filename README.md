@@ -40,7 +40,7 @@ DataSF API ──ingest──▶ data/raw/*.csv ──build (SQL in DuckDB)─�
 - **Monitoring agents** ([src/watch.py](src/watch.py)): a watch checks an area on a schedule. Plain SQL finds new events and unusual jumps; only when something is new does the model write a short alert, with no tools and every citation checked. The assistant can propose a watch, but only a person can create one.
 - **Web UI** ([src/server.py](src/server.py), [src/ui/index.html](src/ui/index.html)): Ask, Places, Watches and SQL views, plus a panel that shows any event's source records. It uses only the Python standard library and listens only on localhost.
 
-**[docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)** explains every layer, the 43 design decisions with their tradeoffs, known limitations, and the roadmap (skills, AI-assisted integration).
+**[docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)** explains every layer, the 44 design decisions with their tradeoffs, known limitations, and the roadmap (skills, AI-assisted integration).
 
 ### Results on the current data (Aug 17 – Nov 15, 2026)
 

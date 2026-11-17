@@ -1,0 +1,5 @@
+{
+  "code": {"NoLostWatch": "PASS", "NoResurrectedWatch": "PASS", "NoMissedEvent": "PASS", "NoDuplicateAlert": "PASS", "NoStuckThread": "PASS"},
+  "process_lock": {"NoLostWatch": "VIOLATED", "NoResurrectedWatch": "VIOLATED", "NoMissedEvent": "VIOLATED", "NoDuplicateAlert": "VIOLATED"},
+  "old_checkpoint": {"NoLostWatch": "VIOLATED", "NoResurrectedWatch": "VIOLATED", "NoMissedEvent": "VIOLATED", "NoDuplicateAlert": "VIOLATED"}
+}
