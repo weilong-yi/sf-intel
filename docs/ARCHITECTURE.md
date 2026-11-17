@@ -12,9 +12,10 @@ when it should change. It's written for someone reviewing the code or extending 
 - [7. The assistant](#7-the-assistant)
 - [8. Governance](#8-governance)
 - [9. Web UI and API](#9-web-ui-and-api)
-- [10. Data quality results](#10-data-quality-results)
-- [11. Known limitations](#11-known-limitations)
-- [12. Roadmap: monitoring agents, skills, AI-assisted integration](#12-roadmap)
+- [10. Monitoring agents](#10-monitoring-agents)
+- [11. Data quality results](#11-data-quality-results)
+- [12. Known limitations](#12-known-limitations)
+- [13. Roadmap: skills, AI-assisted integration](#13-roadmap)
 - [Decision index](#decision-index)
 
 ---
@@ -46,8 +47,8 @@ copy is kept exactly as published.
 | **Dossier / profile** | Everything all systems know about one place, in one view. | `dossier.build`, Places view |
 | **Assistant** | An LLM that answers questions using tools over the ontology, citing the records it used. | `assistant.py` |
 | **Provenance** | For any fact: which source, which record, and how it was linked. | `event.source`, `source_record_id`, `match_method` |
-| **Agents** *(planned)* | Automated, recurring work on the same foundation, e.g. watching a neighborhood. | [§12](#12-roadmap) |
-| **Skills** *(planned)* | Reusable, domain-specific knowledge (terminology, data quirks) the assistant loads when relevant. | [§12](#12-roadmap) |
+| **Agents** | Automated, recurring work on the same foundation: a **watch** checks an area on a schedule and writes a cited alert. | `watch.py`, Watches view, [§10](#10-monitoring-agents) |
+| **Skills** *(planned)* | Reusable, domain-specific knowledge (terminology, data quirks) the assistant loads when relevant. | [§13](#13-roadmap) |
 
 The order matters: search, profiles and the assistant only work because the foundation and
 ontology underneath them are sound. Most of the effort in this project went into sections 4 and 5.
@@ -60,16 +61,16 @@ DataSF API ──┤ ingest ──▶ raw copy ──▶ staging ──▶ ontol
  (3 sources) │ src/ingest.py  data/raw   stg_*       src/build.py · DuckDB file  │
              └───────────────────────────────────┬───────────────────────────────┘
                                                  │ read-only, file access off
-                      ┌──────────────────────────┼──────────────────────────┐
-                      ▼                          ▼                          ▼
-              SEARCH + PROFILE               ASSISTANT                   WEB UI
-              src/dossier.py           src/assistant.py            src/server.py
-              resolve(text) → place    Claude + 2 tools in a       src/ui/index.html
-              build(place, radius)     hand-written loop           Ask · Places · SQL
+         ┌──────────────────────┬──────────────────┼───────────────────┬─────────────────────┐
+         ▼                      ▼                  ▼                   ▼                     ▼
+ SEARCH + PROFILE           ASSISTANT       MONITORING AGENTS        WEB UI
+ src/dossier.py        src/assistant.py      src/watch.py         src/server.py
+ resolve(text) → place Claude + 3 tools,     SQL detect → summary  src/ui/index.html
+ build(place, radius)  hand-written loop     on a schedule         Ask · Places · Watches · SQL
                       ▲                          │                          │
                       └──── called as a tool ────┘                          │
                                                  └── streams events ───────►┘
-                                       data/audit_log.jsonl (every question)
+                    data/audit_log.jsonl (every question) · data/alerts.jsonl (every agent run)
 ```
 
 | Layer | Files | Runs | Output |
@@ -78,6 +79,7 @@ DataSF API ──┤ ingest ──▶ raw copy ──▶ staging ──▶ ontol
 | Build | `build.py` | on demand, ~8 s | `data/sf_intel.duckdb` |
 | Search and profile | `dossier.py` | per request, < 1 s | JSON / terminal |
 | Assistant | `assistant.py`, `prompts.py` | per question, 10–25 s | answer + audit line |
+| Monitoring agents | `watch.py` | scheduled or on demand; detection < 1 s, summary ~5 s | `data/alerts.jsonl` |
 | Web UI | `server.py`, `ui/index.html` | long-running, localhost | browser app |
 
 ## 4. Data foundation
@@ -165,7 +167,7 @@ shared set of fields (`category`, `subcategory`, `description`, `status`, `occur
 
 | Decision | Why | Cost | Revisit when |
 |---|---|---|---|
-| **D15. One shared event shape + source tables for detail** | Simple cross-source queries without losing detail. | Field meanings differ slightly by source (a police `status` is a resolution; a 311 `status` is open/closed). | Add a field dictionary (see Skills, §12). |
+| **D15. One shared event shape + source tables for detail** | Simple cross-source queries without losing detail. | Field meanings differ slightly by source (a police `status` is a resolution; a 311 `status` is open/closed). | Add a field dictionary (see Skills, §13). |
 | **D16. No cross-source incident linking** | No shared ID exists; time-and-place matching has real false-match risk. | A police and an EMS response to the same overdose count as two events. The assistant is told never to add counts across sources. | Needed for a workflow: build it as its own matching step with review. |
 
 ## 6. Search and place profiles
@@ -231,8 +233,9 @@ prints them; the web server streams them to the browser. One loop, two front end
 |---|---|---|
 | `location_profile` | `place`, `radius_m` | the place profile (§6.2) as JSON |
 | `run_sql` | `purpose`, `sql` | one read-only query, ≤ 200 rows, cells ≤ 120 characters |
+| `propose_watch` | `place`, `radius_m`, `sources`, `categories`, `schedule` | a validated watch **proposal**; nothing is created (see D38) |
 
-Both use strict JSON schemas. The `purpose` field makes the model state why it's running each
+All three use strict JSON schemas. The `purpose` field makes the model state why it's running each
 query, which makes the audit log and the UI readable.
 
 ### 7.3 Prompt
@@ -256,7 +259,7 @@ records, no shared IDs across sources, cancelled EMS calls.
 |---|---|---|---|
 | **D21. Hand-written loop, not a framework** | Every step visible and logged; checks are easy to add. | More code than the SDK's tool runner. | Production: the tool runner, with hooks for the same checks. |
 | **D22. One open-ended SQL tool + one high-level tool** | Answers questions nobody anticipated. | Valid SQL can still answer the wrong question. | High-stakes or repeated questions: specific tools with fixed queries. |
-| **D23. Caveats in the prompt** | The model can't know local data quirks; they came from profiling. | The prompt grows and needs maintaining. | Many caveats: move them to skills loaded when relevant (§12). |
+| **D23. Caveats in the prompt** | The model can't know local data quirks; they came from profiling. | The prompt grows and needs maintaining. | Many caveats: move them to skills loaded when relevant (§13). |
 | **D24. Live schema in the prompt** | Never out of date. | Costs tokens on every call (mitigated by caching). | Very large schemas: a `describe_table` tool instead. |
 | **D25. Strongest model, medium effort** | Accuracy on multi-step SQL reasoning; cost is fine at demo volume. | Slower and pricier than smaller models. | High volume: test smaller models on a question set; choose by cost per *correct* answer. |
 | **D26. Errors returned to the model** | It can fix its own SQL instead of the run crashing. | A bad query costs an extra step. | Never. |
@@ -308,10 +311,15 @@ cursor, because DuckDB connections aren't shared across threads.
 | POST | `/api/sql` | read-only query result (same checks as the assistant) |
 | POST | `/api/ask` | the assistant's events, streamed as newline-delimited JSON |
 | POST | `/api/reset` | forget a conversation |
+| GET | `/api/watches` | watches and the data window |
+| GET | `/api/alerts?watch=&limit=` | recent alerts, newest first |
+| POST | `/api/watches` | create a watch (from the form, or a confirmed proposal) |
+| POST | `/api/watches/run` | run a watch now, or replay past weeks |
+| POST | `/api/watches/delete` | delete a watch |
 
 ### 9.2 Front end
 
-`ui/index.html` is one file with no build step. Three views (Ask, Places, SQL) plus an event
+`ui/index.html` is one file with no build step. Four views (Ask, Places, Watches, SQL) plus an event
 panel that opens from any event ID, in a table or in an answer's citations, and shows the
 **raw rows the city published**. Pages can be linked directly (`?view=places&place=…`,
 `?event=…`, `?q=…`).
@@ -328,7 +336,71 @@ monospace all-caps labels, and one colour per source system. It works in light a
 | **D32. Event panel shows raw source rows** | One click from any number or citation to the source. | Raw columns aren't friendly. | Non-technical users: hide raw rows behind an "advanced" toggle. |
 | **D33. Localhost only** | No exposure of data or credentials. | Only usable at the machine running it. | Team use: deploy behind single sign-on with role-based access. |
 
-## 10. Data quality results
+## 10. Monitoring agents
+
+The assistant answers when someone asks. A **watch** works when nobody asks: on a schedule it
+checks one area for new events and unusual jumps, and writes an alert that cites the events
+behind it. `src/watch.py`; the Watches view in the UI.
+
+### 10.1 A run, step by step
+
+```
+watch (place, radius, sources, categories, schedule, checkpoint)
+   │
+   ▼  1. DETECT: plain SQL, no AI, free
+   │     new events in the area since the checkpoint
+   │     jumps: source/category whose last 7 days ≥ prior weekly average × 1.5 (and ≥ 5 events)
+   │     counts by type, place, day and status, computed in code
+   │
+   ├── nothing new ──▶ alert "QUIET", no model call, $0
+   │
+   ▼  2. SUMMARIZE: one model call, no tools, low effort, ≤ 2,000 tokens
+   │     input: only what detection found
+   │     output: lead with whether anything needs attention, ≤ 4 bullets, cited
+   │
+   ▼  3. CHECK: every [source:id] in the summary must be in the input
+   │     anything else → alert marked "invalid citations"
+   │     API down or model declines → plain-text summary instead (alert still delivered)
+   │
+   ▼  4. RECORD: append to data/alerts.jsonl; advance the checkpoint
+```
+
+Status: **ATTENTION** (a jump), **NEW** (new events, no jump), **QUIET** (nothing new).
+
+### 10.2 Creating watches
+
+| Who | How |
+|---|---|
+| A person, in the UI | Watches view → New watch form |
+| A person, in the terminal | `python -m src.watch add "16th & Mission" --sources police --categories "Drug Offense"` |
+| The assistant, in chat | Calls `propose_watch`; the UI shows a **Create watch** card. Nothing exists until the person clicks it. |
+
+### 10.3 Running them
+
+- `python -m src.watch run` runs every watch that is due (hourly / daily / weekly). Schedule it with Windows Task Scheduler or cron.
+- **Run now** in the UI, or `run --all`, runs immediately.
+- **Replay** (`replay w1 --weeks 4`, or *Replay 4 weeks* in the UI) re-runs the last N weeks one at a time, as if each week's data had just arrived. Replays don't move the checkpoint and are labelled REPLAY. They exist because the demo dataset is a fixed 90-day download; replay shows honestly what the agent would have reported without pretending the data is live.
+
+Example from replay: the week of Oct 25 – Nov 1 flagged police drug offences within 100 m of
+16th & Mission at **31 vs a prior weekly average of 19.5 (+59%)**; the other three weeks were
+in line. Each summary cost about $0.02; quiet runs cost nothing.
+
+### 10.4 Decisions
+
+| Decision | Why | Cost | Revisit when |
+|---|---|---|---|
+| **D34. Detection in SQL; the model only summarizes** | Deciding *whether* something happened must be deterministic, testable and free. Quiet runs make no model call. | The rules (D40) are simple and can miss subtle patterns. | Enough labelled history: tune thresholds or add seasonal baselines. |
+| **D35. The agent's model call has no tools** | Nobody watches an autonomous run, so it gets tighter limits than chat: it can only describe what detection found. | Can't investigate further on its own. | A follow-up step is needed: let the alert link straight into a chat that has tools. |
+| **D36. Every count is computed in code** | In testing, the model counted events itself ("20 of 23 at Wiese"); models miscount long lists. Counts by type, place, day and status are now in the input, and the prompt forbids counting. | Larger input. | Never. |
+| **D37. Citations checked against the input** | A cited ID that wasn't in the input can't be trusted; the alert says so instead of hiding it. | A check, not a fix: a bad alert is still delivered, clearly marked. | Repeated failures: block delivery and fall back to the plain-text summary. |
+| **D38. The model proposes; a person creates** | Creating a watch is a write and starts recurring work. The assistant validates and proposes; the person confirms. | One extra click. | Trusted, low-risk patterns: allow auto-creation within a policy. |
+| **D39. Watch state in JSON files, not the database** | The database stays strictly read-only; watches and alerts are small and human-readable; writes are atomic (write then rename). | No concurrent writers across machines; no querying alerts with SQL. | Multi-user: a proper table with locking, or a queue. |
+| **D40. Jump rule: last 7 days vs prior 4-week weekly average, +50%, at least 5 events** | Simple to explain and to check by hand. The minimum of 5 removes noise like "3 vs 1". | Ignores day-of-week and seasonal patterns; drops are not flagged. | Patterns matter: compare with the same weekday or week last year; add drop alerts. |
+| **D41. Alert always delivered** | If the API is down or declines, a plain-text summary from detection is used. Monitoring that silently skips a run is worse than a plainer alert. | Less readable in that case. | Never. |
+| **D42. Replay instead of faking new data** | The dataset is fixed; replay shows real past weeks as if new, labelled as replays, without moving the checkpoint. | Not a substitute for live testing. | Incremental ingest exists: run on live data. |
+| **D43. Checkpoint on when events *occurred*** | Simple; matches how people read "new this week". | **Known gap:** records filed late (a police report entered days after the incident) can land before the checkpoint and never be reported. | Live data: checkpoint on when records were *loaded* (`data_loaded_at`) and report late arrivals separately. |
+
+## 11. Data quality results
 
 On the window Aug 17 – Nov 15, 2026:
 
@@ -341,43 +413,33 @@ On the window Aug 17 – Nov 15, 2026:
 2,600 of 7,288 places appear in all three systems. Reproduce with
 `python experiments/02_match_quality.py`.
 
-## 11. Known limitations
+## 12. Known limitations
 
 - **Public data only.** No people, cases, warrants or narratives. A real deployment would add person and case objects under access controls.
 - **No cross-source incident linking** (D16).
-- **Batch only.** No incremental loads or scheduling.
+- **Batch only.** No incremental loads. Watches can be scheduled, but on this fixed dataset they find new events only through replay.
+- **Late-filed records can be missed by watches** (D43).
 - **No evaluation set.** Answers are spot-checked, not scored against known answers.
 - **Single user, local.** No authentication; conversations are lost on restart.
 - **Police locations are approximate by design**, so place-level police counts are area estimates.
 
-## 12. Roadmap
+## 13. Roadmap
 
 What a fuller operational intelligence platform has that this project doesn't yet, and how
-each would be built on the same foundation.
+each would be built on the same foundation. Monitoring agents, first on this list, are now
+built ([§10](#10-monitoring-agents)).
 
-### 12.1 Monitoring agents
+### 13.1 Skills: domain knowledge as files, not prompt text
 
-The assistant answers questions when someone asks. Many needs recur: *tell me when something
-new happens in this neighborhood*, *send a weekly summary*, *flag a jump in activity*.
-
-Design:
-1. A `watch` table: place or neighborhood, radius, event filters, schedule, last-run time.
-2. A scheduled job (`python -m src.watch`, run by Task Scheduler or cron) that runs incremental ingest, then queries `event` for rows newer than each watch's last run.
-3. If anything is new or a threshold is crossed, the assistant writes a short summary **with citations**, using the same tools and safeguards.
-4. Results go to an inbox view in the UI (and later email or chat), each with an audit-log entry.
-
-Tradeoff: autonomous runs need tighter limits (smaller step cap, fixed tools only, no open-ended SQL) because nobody is watching each step.
-
-### 12.2 Skills: domain knowledge as files, not prompt text
-
-Today the data caveats live inside the system prompt (D23). Instead:
+Today the data caveats live inside the system prompts (D23), and the watch agent has its own.
+Instead:
 - `skills/police-locations.md`, `skills/ems-dispositions.md`, `skills/311-terminology.md`, each describing a quirk, the terminology, and how to query it correctly.
 - A short index in the prompt; the assistant loads a skill when a question touches it.
 - New lessons from the field (like the cancelled-EMS-call misreading) become a new skill file, reviewed like code.
 
 Tradeoff: one more step per question when a skill is needed, in exchange for a prompt that doesn't grow with every lesson.
 
-### 12.3 AI-assisted integration
+### 13.2 AI-assisted integration
 
 Adding a source today means hand-writing its staging SQL. With the ontology defined, an
 LLM could draft that work:
@@ -388,7 +450,7 @@ LLM could draft that work:
 
 Tradeoff: faster integration, but the review step is mandatory; a wrong mapping silently corrupts every downstream answer.
 
-### 12.4 Also next
+### 13.3 Also next
 
 - An **evaluation set**: 20–30 questions with hand-written SQL answers, run before every prompt or model change.
 - **Incremental ingest** keyed on `data_loaded_at`, with data-quality checks that fail the build.
@@ -433,3 +495,13 @@ Tradeoff: faster integration, but the review step is mandatory; a wrong mapping 
 | D31 | NDJSON streaming | [9](#9-web-ui-and-api) |
 | D32 | Raw rows in the event panel | [9](#9-web-ui-and-api) |
 | D33 | Localhost only | [9](#9-web-ui-and-api) |
+| D34 | Detection in SQL; the model only summarizes | [10.4](#104-decisions) |
+| D35 | Agent model call has no tools | [10.4](#104-decisions) |
+| D36 | Every count computed in code | [10.4](#104-decisions) |
+| D37 | Citations checked against the input | [10.4](#104-decisions) |
+| D38 | The model proposes; a person creates | [10.4](#104-decisions) |
+| D39 | Watch state in JSON files | [10.4](#104-decisions) |
+| D40 | Jump rule | [10.4](#104-decisions) |
+| D41 | Alert always delivered | [10.4](#104-decisions) |
+| D42 | Replay instead of faking new data | [10.4](#104-decisions) |
+| D43 | Checkpoint on when events occurred | [10.4](#104-decisions) |

@@ -122,6 +122,15 @@ def _candidates(con, street_text: str) -> list[str]:
     return [r[0] for r in rows]
 
 
+def area_location_ids(con, location_id: str, radius_m: float) -> list[str]:
+    """The place plus every intersection within radius_m (same rule as build())."""
+    rows = con.execute("""
+        WITH me AS (SELECT lat, lon FROM location WHERE location_id = ?)
+        SELECT l.location_id FROM location l, me
+        WHERE dist_m(me.lat, me.lon, l.lat, l.lon) <= ?""", [location_id, radius_m]).fetchall()
+    return [r[0] for r in rows]
+
+
 # -------------------------------------------------------------------- build
 def build(con, location_id: str, radius_m: float = AREA_METERS) -> dict:
     def rows(sql, params=()):

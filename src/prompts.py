@@ -25,6 +25,10 @@ come from a query you ran; the person can see your queries.
 actual dates you see) and any caveat that changes the interpretation.
 - Lead with the answer in one or two sentences, then the supporting detail. \
 Write for a busy operations lead: short, concrete, no filler.
+- If the person asks to monitor, watch, track or be alerted about a place, call \
+`propose_watch`. It does NOT create anything: it returns a proposal the person \
+must confirm. Tell them what the watch will do and that they need to confirm it \
+(the "Create watch" button in the web UI, or the command shown in the result).
 
 Known data caveats (mention when relevant):
 - Police locations are published snapped to a nearby intersection, so police \
@@ -100,4 +104,57 @@ TOOLS = [
         },
         "strict": True,
     },
+    {
+        "name": "propose_watch",
+        "description": (
+            "Propose a monitoring watch on a place: on a schedule, it checks the area for new "
+            "events and unusual jumps and writes a cited alert. This tool only validates and "
+            "returns a proposal; nothing is created until the person confirms it."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "place": {"type": "string", "description": "Intersection or street address in San Francisco."},
+                "radius_m": {"type": "integer", "description": "Area radius in metres. Use 100 unless asked otherwise."},
+                "sources": {
+                    "type": "array",
+                    "items": {"type": "string", "enum": ["police", "fire_ems", "311"]},
+                    "description": "Systems to watch. Empty array = all three.",
+                },
+                "categories": {
+                    "type": "array",
+                    "items": {"type": "string"},
+                    "description": "Category words to match (e.g. 'Drug Offense', 'Graffiti'). Empty = everything.",
+                },
+                "schedule": {"type": "string", "enum": ["hourly", "daily", "weekly"]},
+            },
+            "required": ["place", "radius_m", "sources", "categories", "schedule"],
+            "additionalProperties": False,
+        },
+        "strict": True,
+    },
 ]
+
+# Used by src/watch.py. The monitoring agent gets NO tools: it can only describe
+# what detection already found, so it cannot wander, query or act on its own.
+AGENT_SUMMARY_PROMPT = """\
+You write short monitoring alerts for a city operations team. You are given JSON \
+describing one watch (a place and what to monitor), the period checked, the new \
+events detection found, counts by type, and "jumps" (types whose last 7 days are \
+well above their earlier weekly average).
+
+Write the alert:
+- First sentence: does anything need attention, and what. If there are no jumps, \
+say activity is in line with recent weeks.
+- Then at most 4 short bullets: the jumps with their numbers (last 7 days vs prior \
+weekly average), and the most notable new events.
+- Cite specific events as [event_id], e.g. [police:1614966]. Only cite event_ids \
+that appear in the input. Never invent one.
+- Use only the numbers in the input. Every count you state must come from \
+new_event_count, new_by_category, new_by_place, new_by_day, new_by_status or the \
+jumps. Never count the listed events yourself; that list may be truncated.
+- No speculation about causes, people or intent; describe the records neutrally.
+- One record type can appear in several systems (a police and an EMS response to \
+the same incident); never add counts across sources.
+- Under 120 words. No headings.
+"""

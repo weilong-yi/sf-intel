@@ -135,6 +135,19 @@ def execute_tool(con, name: str, args: dict) -> dict:
         if name == "location_profile":
             data = location_profile_data(con, args["place"], args["radius_m"])
             return {"text": json.dumps(data, default=str), "is_error": "error" in data, "data": data}
+        if name == "propose_watch":
+            # Validates only. Creating a watch is a write, so a person confirms it.
+            from src.watch import describe, validate_definition
+            d = validate_definition(con, args["place"], args["radius_m"], args["sources"],
+                                    args["categories"], args["schedule"])
+            if "error" in d:
+                return {"text": json.dumps(d), "is_error": True, "data": d}
+            cmd = (f'python -m src.watch add "{d["place_input"]}" --radius {d["radius_m"]:.0f} --schedule {d["schedule"]}'
+                   + (f" --sources {' '.join(d['sources'])}" if d["sources"] else "")
+                   + (" --categories " + " ".join(f'"{c}"' for c in d["categories"]) if d["categories"] else ""))
+            proposal = {"proposal": {**d, "name": describe(d)}, "status": "NOT CREATED - needs confirmation",
+                        "confirm_in_cli": cmd}
+            return {"text": json.dumps(proposal, default=str), "is_error": False, "data": proposal}
         return {"text": f"Unknown tool: {name}", "is_error": True, "data": None}
     except (ValueError, KeyError, duckdb.Error) as e:
         return {"text": f"Error: {type(e).__name__}: {e}", "is_error": True, "data": None}

@@ -217,8 +217,46 @@ dl.kv dt { color: var(--muted); font-family: var(--font-mono); font-size: .76rem
 dl.kv dd { margin: 0; word-break: break-word; }
 .grain-note { background: var(--accent-soft); border-radius: var(--r); padding: 10px 12px; font-size: .86rem; }
 
+/* ---------- WATCHES ---------- */
+.watch-layout { display: grid; grid-template-columns: 340px minmax(0, 1fr); gap: 16px; align-items: start; }
+.watch-side { display: grid; gap: 14px; position: sticky; top: 76px; }
+.wform { display: grid; gap: 10px; }
+.wform label { display: grid; gap: 4px; font-size: 12px; color: var(--muted); }
+.wform .row2 { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+.checks { display: flex; gap: 12px; flex-wrap: wrap; font-size: 13px; color: var(--ink); }
+.checks label { display: flex; align-items: center; gap: 6px; color: var(--ink); font-size: 13px; }
+.wcard { padding: 12px 0; border-bottom: 1px solid var(--line); display: grid; gap: 6px; }
+.wcard:last-child { border-bottom: 0; }
+.wcard .wn { font-weight: 600; font-size: 13px; }
+.wcard .wm { font-family: var(--font-mono); font-size: 10.5px; letter-spacing: .04em; color: var(--muted); }
+.wcard .wb { display: flex; gap: 6px; flex-wrap: wrap; }
+.wcard.sel .wn { color: var(--accent); }
+.inbox-head { display: flex; justify-content: space-between; align-items: center; gap: 10px; flex-wrap: wrap; margin-bottom: 12px; }
+.alert { background: var(--surface); box-shadow: var(--ring); border-radius: var(--r-lg); padding: 14px 16px; display: grid; gap: 10px; border-left: 3px solid var(--line); }
+.alert + .alert { margin-top: 10px; }
+.alert.attention { border-left-color: var(--accent); }
+.alert.new { border-left-color: var(--police); }
+.alert.quiet { opacity: .8; }
+.alert-top { display: flex; justify-content: space-between; gap: 10px; flex-wrap: wrap; align-items: baseline; }
+.alert-title { font-weight: 600; font-size: 14px; }
+.status { font-family: var(--font-mono); font-size: 10.5px; font-weight: 600; letter-spacing: .08em; padding: 2px 8px; border-radius: 999px; margin-right: 8px; }
+.status.attention { background: var(--accent-soft); color: var(--accent); }
+.status.new { background: color-mix(in srgb, var(--police) 14%, transparent); color: var(--police); }
+.status.quiet { background: var(--sunk); color: var(--muted); }
+.alert .answer { box-shadow: none; padding: 0; background: none; }
+.alert-meta { font-family: var(--font-mono); font-size: 10.5px; letter-spacing: .04em; color: var(--subtle); display: flex; gap: 12px; flex-wrap: wrap; }
+.alert-meta .ok { color: var(--good); } .alert-meta .bad { color: var(--bad); }
+.jumps { display: flex; gap: 6px; flex-wrap: wrap; }
+.jump { font-size: 12px; background: var(--accent-soft); color: var(--ink); border-radius: var(--r); padding: 3px 8px; }
+.jump b { color: var(--accent); }
+.proposal { box-shadow: 0 0 0 1px var(--accent); border-radius: var(--r-lg); padding: 12px 14px; background: var(--surface); display: grid; gap: 8px; }
+.proposal .pt { font-weight: 600; }
+.empty { color: var(--muted); font-size: 13px; padding: 20px 4px; }
+
 @media (max-width: 900px) {
   .cols-3, .cols-2 { grid-template-columns: minmax(0, 1fr); }
+  .watch-layout { grid-template-columns: minmax(0, 1fr); }
+  .watch-side { position: static; }
   .sql-layout { grid-template-columns: minmax(0, 1fr); }
   .schema { position: static; max-height: 260px; }
   .top-meta { display: none; }
@@ -233,6 +271,7 @@ dl.kv dd { margin: 0; word-break: break-word; }
     <nav class="tabs" role="tablist">
       <button class="tab" role="tab" data-view="ask" aria-selected="true">Ask</button>
       <button class="tab" role="tab" data-view="places" aria-selected="false">Places</button>
+      <button class="tab" role="tab" data-view="watches" aria-selected="false">Watches</button>
       <button class="tab" role="tab" data-view="sql" aria-selected="false">SQL</button>
     </nav>
     <div class="top-meta" id="topMeta"></div>
@@ -275,6 +314,36 @@ dl.kv dd { margin: 0; word-break: break-word; }
       <button class="btn" type="submit">Show profile</button>
     </form>
     <div id="placeOut"></div>
+  </section>
+
+  <!-- ================= WATCHES ================= -->
+  <section class="view" id="view-watches" hidden>
+    <div class="watch-layout">
+      <aside class="watch-side">
+        <div class="panel">
+          <h3>New watch</h3>
+          <form class="wform" id="watchForm">
+            <label>Place<input type="text" id="wPlace" placeholder="16th & Mission" required></label>
+            <div class="row2">
+              <label>Area<select id="wRadius"><option value="50">50 m</option><option value="100" selected>100 m</option><option value="200">200 m</option><option value="300">300 m</option></select></label>
+              <label>Schedule<select id="wSchedule"><option>hourly</option><option selected>daily</option><option>weekly</option></select></label>
+            </div>
+            <div><div style="font-size:12px;color:var(--muted);margin-bottom:4px">Sources (none = all)</div>
+              <div class="checks"><label><input type="checkbox" value="police"> Police</label><label><input type="checkbox" value="fire_ems"> Fire/EMS</label><label><input type="checkbox" value="311"> 311</label></div></div>
+            <label>Categories (comma-separated, optional)<input type="text" id="wCats" placeholder="Drug Offense, Graffiti"></label>
+            <button class="btn" type="submit">Create watch</button>
+            <div id="wFormMsg"></div>
+          </form>
+        </div>
+        <div class="panel"><h3>Watches</h3><div id="watchList"><p class="empty">Loading…</p></div></div>
+        <p class="muted" style="font-size:12px;margin:0">Detection is plain SQL. The model only writes a summary when something is new, using no tools, and every citation is checked. Schedule <code>python -m src.watch run</code> to run due watches automatically.</p>
+      </aside>
+      <div>
+        <div class="inbox-head"><div><div class="eyebrow">Alerts</div><strong id="inboxTitle">All watches</strong></div>
+          <button class="btn ghost sm" type="button" id="showAll" hidden>Show all watches</button></div>
+        <div id="alertList"><p class="empty">Loading…</p></div>
+      </div>
+    </div>
   </section>
 
   <!-- ================= SQL ================= -->
@@ -320,6 +389,7 @@ function showView(name) {
   document.querySelectorAll(".view").forEach(v => v.hidden = v.id !== "view-" + name);
   try { localStorage.setItem("sfintel-view", name); } catch (e) {}
   if (name === "sql") loadSchema();
+  if (name === "watches") loadWatches();
 }
 document.querySelectorAll(".tab").forEach(t => t.addEventListener("click", () => showView(t.dataset.view)));
 
@@ -367,6 +437,13 @@ function md(src) {
   while (i < lines.length) {
     const line = lines[i];
     if (!line.trim()) { i++; continue; }
+    if (/^\s*```/.test(line)) {  // fenced code block
+      const code = []; i++;
+      while (i < lines.length && !/^\s*```/.test(lines[i])) { code.push(lines[i]); i++; }
+      i++;
+      out += `<pre class="sql">${esc(code.join("\n"))}</pre>`;
+      continue;
+    }
     let m;
     if ((m = line.match(/^(#{1,4})\s+(.*)/))) { out += `<h${m[1].length + 1}>${inline(m[2])}</h${m[1].length + 1}>`; i++; continue; }
     if (/^\s*\|.*\|\s*$/.test(line)) {
@@ -405,7 +482,8 @@ const SUGGESTIONS = [
   "Where is the 311 graffiti backlog worst, and how old is it?",
   "Compare 6th & Market with 16th & Mission across all three systems.",
   "What are the busiest hours for police incidents in the Tenderloin?",
-  "Which intersections had the biggest jump in activity this month?"
+  "Which intersections had the biggest jump in activity this month?",
+  "Watch 16th & Mission for drug offences and alert me daily."
 ];
 let convId = newId();
 let asking = false;
@@ -463,6 +541,7 @@ async function ask(question) {
       } else {
         c.innerHTML = `<div class="head"><b>${esc(ev.name)}</b> · ${esc(ev.input.place || "")}${ev.input.radius_m != null ? ` · ${esc(ev.input.radius_m)} m` : ""}</div><div class="res"><span class="muted" style="font-size:.8rem">Running…</span></div>`;
       }
+      if (ev.name === "propose_watch") work.open = true;  // keep the confirm card visible
       steps.appendChild(c); calls[ev.id] = c;
       wlabel.textContent = `Running ${ev.name}…`;
     } else if (ev.type === "tool_result") {
@@ -474,11 +553,14 @@ async function ask(question) {
         res.innerHTML = `<div class="res-meta"><span>${d.rows.length.toLocaleString()} row${d.rows.length === 1 ? "" : "s"}${d.truncated ? " · truncated" : ""}</span></div>` + tableHtml(d.columns, d.rows, "res-table");
       } else if (ev.name === "location_profile") {
         res.innerHTML = profileSummary(ev.data);
+      } else if (ev.name === "propose_watch" && ev.data && ev.data.proposal) {
+        res.innerHTML = "";
+        res.appendChild(proposalCard(ev.data.proposal));
       }
     } else if (ev.type === "answer") {
       $(".spinner", turn)?.remove();
       wlabel.textContent = `${nTools} tool call${nTools === 1 ? "" : "s"} · ${ev.seconds}s · show work`;
-      work.open = false;
+      work.open = !!$(".proposal", turn);  // stay open if a watch is waiting for confirmation
       if (!nTools) work.hidden = true;
       $(".ans", turn).innerHTML = `<div class="answer">${md(ev.text)}</div><div class="ans-foot" style="margin-top:6px">${esc(ev.model)} · conversation so far ~$${Number(ev.cost_usd).toFixed(3)}</div>`;
     } else if (ev.type === "error") {
@@ -605,6 +687,96 @@ function renderPlace(d) {
   $("#askAboutPlace").onclick = () => { showView("ask"); ask(`What's going on around ${loc.label} (within ${d.radius_m} m)? What stands out and what changed recently?`); };
 }
 
+/* ================= WATCHES ================= */
+let selectedWatch = null;
+
+function proposalCard(p) {
+  const el = document.createElement("div"); el.className = "proposal";
+  el.innerHTML = `<div class="eyebrow">Proposed watch · not created yet</div>
+    <div class="pt">${esc(p.name)}</div>
+    <div class="muted" style="font-size:12px">${esc(p.schedule)} · matched “${esc(p.place_input)}” to ${esc(p.label)} (${esc(p.resolved_by)})</div>
+    <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap"><button class="btn sm" type="button">Create watch</button><span class="pmsg muted" style="font-size:12px">The assistant can only propose. You decide.</span></div>`;
+  $("button", el).onclick = async () => {
+    const { ok, data } = await api("/api/watches", { method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ place: p.place_input, radius_m: p.radius_m, sources: p.sources, categories: p.categories, schedule: p.schedule }) });
+    if (!ok) { $(".pmsg", el).innerHTML = `<span style="color:var(--bad)">${esc(data.error)}</span>`; return; }
+    $("button", el).remove();
+    $(".pmsg", el).innerHTML = `Created <b>${esc(data.id)}</b> · <button type="button" class="linkbtn" data-goto-watch="${esc(data.id)}">open in Watches</button>`;
+  };
+  return el;
+}
+
+async function loadWatches() {
+  const [w, a] = await Promise.all([api("/api/watches"), api(`/api/alerts?limit=40${selectedWatch ? "&watch=" + selectedWatch : ""}`)]);
+  if (!w.ok) { $("#watchList").innerHTML = `<div class="err">${esc(w.data.error)}</div>`; return; }
+  const watches = w.data.watches;
+  $("#watchList").innerHTML = watches.length ? watches.map(x => `
+    <div class="wcard ${x.id === selectedWatch ? "sel" : ""}">
+      <div class="wn"><button type="button" class="linkbtn" style="color:inherit;text-decoration:none;font-weight:600" data-select-watch="${esc(x.id)}">${esc(x.id)} · ${esc(x.name)}</button></div>
+      <div class="wm">${esc(x.schedule.toUpperCase())} · LAST RUN ${esc(x.last_run_at ? x.last_run_at.replace("T", " ").slice(0, 16) : "NEVER")} · CHECKED TO ${esc(String(x.last_checked_data_at).replace("T", " ").slice(0, 16))}</div>
+      <div class="wb">
+        <button class="btn sm" type="button" data-run="${esc(x.id)}">Run now</button>
+        <button class="btn ghost sm" type="button" data-replay="${esc(x.id)}" title="Re-run the last 4 weeks one week at a time, as if each were new">Replay 4 weeks</button>
+        <button class="btn ghost sm" type="button" data-del="${esc(x.id)}">Delete</button>
+      </div></div>`).join("") : '<p class="empty">No watches yet. Create one above, or ask the assistant to “watch 16th & Mission for drug offences”.</p>';
+  $("#inboxTitle").textContent = selectedWatch ? (watches.find(x => x.id === selectedWatch) || {}).name || selectedWatch : "All watches";
+  $("#showAll").hidden = !selectedWatch;
+  renderAlerts(a.ok ? a.data : []);
+}
+
+function renderAlerts(alerts) {
+  if (!alerts.length) { $("#alertList").innerHTML = '<p class="empty">No alerts yet. Click <b>Run now</b> on a watch, or <b>Replay 4 weeks</b> to see how it would have reported the last month.</p>'; return; }
+  $("#alertList").innerHTML = alerts.map(a => {
+    const jumps = (a.jumps || []).slice(0, 4).map(j => `<span class="jump">${srcDot(j.source)}${esc(SRC[j.source] ? SRC[j.source].label : j.source)} ${esc(j.category)}: <b>${j.last_7d}</b> vs ${j.prior_weekly_avg}/wk${j.change_pct != null ? ` (+${j.change_pct}%)` : " (new)"}</span>`).join("");
+    const cites = a.citations_ok == null ? "" : a.citations_ok ? '<span class="ok">✓ citations checked</span>' : `<span class="bad">✗ invalid citations: ${esc(a.invalid_citations.join(", "))}</span>`;
+    return `<div class="alert ${esc(a.status)}">
+      <div class="alert-top"><div class="alert-title"><span class="status ${esc(a.status)}">${esc(a.status.toUpperCase())}</span>${esc(a.watch_name)}</div>
+        <div class="alert-meta">${esc(a.period_from.slice(0, 16))} → ${esc(a.period_to.slice(0, 16))}${a.replay ? " · REPLAY" : ""}</div></div>
+      ${jumps ? `<div class="jumps">${jumps}</div>` : ""}
+      <div class="answer">${md(a.summary || "")}</div>
+      <div class="alert-meta"><span>${a.new_count} NEW</span><span>SUMMARY: ${esc((a.summary_by || "").toUpperCase())}</span><span>$${Number(a.cost_usd || 0).toFixed(3)}</span>${cites}<span>RUN ${esc(a.run_at.replace("T", " ").slice(0, 16))}</span></div>
+    </div>`;
+  }).join("");
+}
+
+$("#watchForm").addEventListener("submit", async e => {
+  e.preventDefault();
+  const body = {
+    place: $("#wPlace").value.trim(), radius_m: Number($("#wRadius").value), schedule: $("#wSchedule").value,
+    sources: [...document.querySelectorAll("#watchForm .checks input:checked")].map(i => i.value),
+    categories: $("#wCats").value.split(",").map(s => s.trim()).filter(Boolean)
+  };
+  const { ok, data } = await api("/api/watches", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
+  if (!ok) {
+    $("#wFormMsg").innerHTML = `<div class="err">${esc(data.error)}${data.candidates && data.candidates.length ? "\nDid you mean: " + esc(data.candidates.join(", ")) : ""}</div>`;
+    return;
+  }
+  $("#wFormMsg").innerHTML = `<p class="muted" style="font-size:12px;margin:0">Created ${esc(data.id)}: ${esc(data.resolved_by)}</p>`;
+  $("#watchForm").reset(); selectedWatch = data.id; loadWatches();
+});
+
+$("#showAll").addEventListener("click", () => { selectedWatch = null; loadWatches(); });
+
+document.addEventListener("click", async e => {
+  const t = e.target.closest("[data-run],[data-replay],[data-del],[data-select-watch],[data-goto-watch]");
+  if (!t) return;
+  if (t.dataset.selectWatch) { selectedWatch = t.dataset.selectWatch; loadWatches(); return; }
+  if (t.dataset.gotoWatch) { selectedWatch = t.dataset.gotoWatch; showView("watches"); return; }
+  if (t.dataset.del) {
+    if (t.dataset.armed !== "1") { t.dataset.armed = "1"; t.textContent = "Confirm delete"; return; }  // two-step, no dialogs
+    await api("/api/watches/delete", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ id: t.dataset.del }) });
+    if (selectedWatch === t.dataset.del) selectedWatch = null;
+    loadWatches(); return;
+  }
+  const id = t.dataset.run || t.dataset.replay;
+  const label = t.textContent; t.disabled = true; t.textContent = t.dataset.run ? "Running…" : "Replaying…";
+  const { ok, data } = await api("/api/watches/run", { method: "POST", headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ id, replay_weeks: t.dataset.replay ? 4 : 0 }) });
+  t.disabled = false; t.textContent = label;
+  if (!ok) { $("#alertList").insertAdjacentHTML("afterbegin", `<div class="err" style="margin-bottom:10px">${esc(data.error)}</div>`); return; }
+  selectedWatch = id; loadWatches();
+});
+
 /* ================= SQL ================= */
 const EXAMPLES = [
   ["Events per source and match method", "SELECT source, match_method, count(*) AS n\nFROM event\nGROUP BY 1, 2\nORDER BY 1, n DESC"],
@@ -708,6 +880,7 @@ document.addEventListener("click", e => {
   if (qs.get("place")) loadPlace(qs.get("place"));
   if (qs.get("event")) openEvent(qs.get("event"));
   if (qs.get("q")) { showView("ask"); ask(qs.get("q")); }
+  if (qs.get("watch")) { selectedWatch = qs.get("watch"); showView("watches"); }
 })();
 </script>
 </body>

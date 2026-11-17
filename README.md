@@ -36,10 +36,11 @@ DataSF API ──ingest──▶ data/raw/*.csv ──build (SQL in DuckDB)─�
   - Matches records with no name match to the nearest intersection.
   - The result is one `event` table where every row records its source record and how its location was matched.
 - **Address profile** ([src/dossier.py](src/dossier.py)): everything all three systems recorded within 100 m of a place. That covers activity and 30-day trends, top categories, fire/EMS response times, the open 311 backlog, and recent events with IDs. Accepts intersections ("16th & Mission") or street addresses.
-- **Assistant** ([src/assistant.py](src/assistant.py), [src/prompts.py](src/prompts.py)): Claude with two tools (`location_profile` and read-only `run_sql`) in a hand-written tool-use loop. Answers cite event IDs such as `[police:1614966]`.
-- **Web UI** ([src/server.py](src/server.py), [src/ui/index.html](src/ui/index.html)): Ask, Places and SQL views, plus a panel that shows any event's source records. It uses only the Python standard library and listens only on localhost.
+- **Assistant** ([src/assistant.py](src/assistant.py), [src/prompts.py](src/prompts.py)): Claude with tools (`location_profile`, read-only `run_sql`, and `propose_watch`) in a hand-written tool-use loop. Answers cite event IDs such as `[police:1614966]`.
+- **Monitoring agents** ([src/watch.py](src/watch.py)): a watch checks an area on a schedule. Plain SQL finds new events and unusual jumps; only when something is new does the model write a short alert, with no tools and every citation checked. The assistant can propose a watch, but only a person can create one.
+- **Web UI** ([src/server.py](src/server.py), [src/ui/index.html](src/ui/index.html)): Ask, Places, Watches and SQL views, plus a panel that shows any event's source records. It uses only the Python standard library and listens only on localhost.
 
-**[docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)** explains every layer, the 33 design decisions with their tradeoffs, known limitations, and the roadmap (monitoring agents, skills, AI-assisted integration).
+**[docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)** explains every layer, the 43 design decisions with their tradeoffs, known limitations, and the roadmap (skills, AI-assisted integration).
 
 ### Results on the current data (Aug 17 – Nov 15, 2026)
 
@@ -179,14 +180,39 @@ Open **Ask** and pick a suggested question, or type one, for example
 
 A typical question takes 2–4 steps, 10–25 seconds and a few cents.
 
-### 10. Review what the assistant did
+### 10. Watches: let an agent monitor a place
+
+Open **Watches**.
+
+![Watches view with alerts](docs/screenshots/watches.png)
+
+1. Create a watch: place `16th & Mission`, sources **Police**, categories `Drug Offense`.
+2. Click **Replay 4 weeks**. The agent re-runs the last four weeks one at a time, as if each week had just arrived. One week is marked **ATTENTION**: 31 drug-offence reports vs a prior weekly average of 19.5 (+59%).
+3. Read an alert: the jump appears as a chip, the summary cites events (click one), and the footer shows the cost and **✓ citations checked**.
+4. Click **Run now**. It reports the last week; run it again and it's **QUIET**, with no model call and $0 cost, because nothing is new.
+5. In **Ask**, try *"Watch 16th & Mission for drug offences and alert me daily."* The assistant proposes the watch and shows a **Create watch** card. Nothing is created until you click it.
+
+From the terminal:
+
+```powershell
+python -m src.watch add "16th & Mission" --sources police --categories "Drug Offense"
+python -m src.watch list
+python -m src.watch replay w1 --weeks 4
+python -m src.watch run            # every watch that is due; schedule this
+python -m src.watch alerts
+```
+
+To run due watches every morning, schedule `python -m src.watch run` with Windows Task Scheduler (set *Start in* to the `sf-intel` folder) or cron.
+
+### 11. Review what the assistant did
 
 ```powershell
 Get-Content data\audit_log.jsonl -Tail 1
 ```
 
 Each line records one question: the model used, every tool call and its input, whether it
-errored, the final answer, and token usage.
+errored, the final answer, and token usage. Agent runs are recorded the same way in
+`data/alerts.jsonl`.
 
 ### Command-line equivalents
 
@@ -206,6 +232,7 @@ python -m src.assistant                            # interactive
 | `/?event=police:1614966` | an event's source records |
 | `/?q=Where+is+the+311+graffiti+backlog+worst%3F` | the assistant, asking that question |
 | `/?view=sql` | the SQL editor |
+| `/?watch=w1` | a watch's alerts |
 
 ---
 
@@ -218,6 +245,7 @@ The model never touches the database. It can only ask the code to run a tool, an
 - At most 8 model calls per question. Tool errors go back to the model instead of crashing the loop.
 - Every question, tool call and answer is appended to `data/audit_log.jsonl`.
 - The web server listens on 127.0.0.1 only.
+- Monitoring agents are stricter still: detection is plain SQL, the summary call has no tools, every count is computed in code, citations are checked against what the model was given, and creating a watch always needs a person.
 
 Defaults: `claude-opus-5-5` at `medium` effort. Override them with the `CLAUDE_MODEL` and
 `CLAUDE_EFFORT` environment variables, for example `$env:CLAUDE_MODEL="claude-haiku-5-5"` for cheaper testing.
@@ -232,6 +260,7 @@ src/
   dossier.py     place resolution + area profile
   prompts.py     system prompt and tool schemas
   assistant.py   tool-use loop, guardrails, audit log
+  watch.py       monitoring agents: detect, summarize, check, alert
   server.py      local web server and JSON API
   ui/index.html  the web UI (single file, no build step)
 experiments/     one-idea scripts

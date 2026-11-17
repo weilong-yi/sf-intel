@@ -11,6 +11,12 @@ Endpoints (all JSON):
   POST /api/ask      {question, conversation_id}
                                      runs the agent; streams one JSON event per line
   POST /api/reset    {conversation_id}
+  GET  /api/watches                  monitoring watches + data window
+  GET  /api/alerts?watch=&limit=     recent alerts, newest first
+  POST /api/watches  {place, radius_m, sources, categories, schedule, name}
+                                     create a watch (a person confirms; the model only proposes)
+  POST /api/watches/run    {id, replay_weeks}   run now, or replay past weeks
+  POST /api/watches/delete {id}
 
 Only listens on 127.0.0.1, so nothing is reachable from other machines.
 """
@@ -27,7 +33,7 @@ from pathlib import Path
 
 import duckdb
 
-from src import dossier
+from src import dossier, watch
 from src.assistant import Assistant, connect, query_rows, schema_info
 
 HOST, PORT = "127.0.0.1", int(os.getenv("SF_INTEL_PORT", "8765"))
@@ -141,6 +147,10 @@ class Handler(BaseHTTPRequestHandler):
                 return self._json(*profile(cur, q.get("place", ""), float(q.get("radius", 100))))
             if url.path == "/api/event":
                 return self._json(*event_detail(cur, q.get("id", "")))
+            if url.path == "/api/watches":
+                return self._json(200, {"watches": watch.load_watches(), "data_through": watch.data_through(cur)})
+            if url.path == "/api/alerts":
+                return self._json(200, watch.load_alerts(q.get("watch") or None, int(q.get("limit", 30))))
             self._json(404, {"error": "Not found"})
         except (ValueError, duckdb.Error) as e:
             self._json(400, {"error": f"{type(e).__name__}: {e}"})
@@ -160,6 +170,21 @@ class Handler(BaseHTTPRequestHandler):
                 return self._json(200, {"ok": True})
             if self.path == "/api/ask":
                 return self._ask(body)
+            if self.path == "/api/watches":
+                w = watch.add_watch(BASE.cursor(), body.get("place", ""), float(body.get("radius_m", 100)),
+                                    body.get("sources") or [], body.get("categories") or [],
+                                    body.get("schedule", "daily"), name=body.get("name") or None)
+                return self._json(400 if "error" in w else 200, w)
+            if self.path == "/api/watches/delete":
+                ok = watch.remove_watch(body.get("id", ""))
+                return self._json(200 if ok else 404, {"ok": ok})
+            if self.path == "/api/watches/run":
+                w = next((x for x in watch.load_watches() if x["id"] == body.get("id")), None)
+                if not w:
+                    return self._json(404, {"error": f"No watch {body.get('id')}"})
+                cur, weeks = BASE.cursor(), int(body.get("replay_weeks") or 0)
+                alerts = watch.replay(cur, w, weeks) if weeks else [watch.run_watch(cur, w)]
+                return self._json(200, alerts)
             self._json(404, {"error": "Not found"})
         except (ValueError, duckdb.Error) as e:
             self._json(400, {"error": f"{type(e).__name__}: {e}"})
